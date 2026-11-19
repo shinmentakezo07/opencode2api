@@ -217,11 +217,19 @@ func parseOneTextToolCall(chunk, nameAttribute string, renames *ToolRenames) (te
 		if err := json.Unmarshal([]byte(body), &payload); err == nil {
 			name := firstTextAny(payload, "name", "tool", "tool_name", "function")
 			if name == "" {
+				// <tool_call name="bash">{...}</tool_call> names the tool on
+				// the tag, not in the JSON object.
+				name = nameAttribute
+			}
+			if name == "" {
 				return textToolCall{}, false
 			}
 			arguments := "{}"
 			if raw, ok := firstTextValue(payload, "arguments", "parameters", "params", "input", "args"); ok {
 				arguments = textArguments(raw)
+			} else if nameAttribute != "" {
+				// The object itself is the argument map.
+				arguments = textArguments(payload)
 			}
 			name = resolveTextToolName(name, renames)
 			if name == "" {
@@ -443,11 +451,10 @@ func rewriteChatTextTools(payload map[string]any, renames *ToolRenames) bool {
 	}
 	message["content"] = clean
 	var toolCalls []any
-	for index, call := range calls {
+	for _, call := range calls {
 		toolCalls = append(toolCalls, map[string]any{
-			"index": index,
-			"id":    newToolCallID("call_"),
-			"type":  "function",
+			"id":   newToolCallID("call_"),
+			"type": "function",
 			"function": map[string]any{
 				"name":      call.Name,
 				"arguments": call.Arguments,
@@ -600,6 +607,24 @@ func (reader *textToolStreamReader) Read(data []byte) (int, error) {
 		}
 		if err != nil {
 			reader.err = err
+			if errors.Is(err, io.EOF) && !reader.done {
+				reader.done = true
+				if final := reader.stream.finish(); len(final) > 0 {
+					// An upstream that ends without a newline leaves the last
+					// line unterminated; separate it so the flushed frames do
+					// not merge into its data.
+					if len(reader.pending) > 0 && !bytes.HasSuffix(reader.pending, []byte("\n\n")) && !bytes.HasSuffix(reader.pending, []byte("\r\n\r\n")) {
+						if !bytes.HasSuffix(reader.pending, []byte("\n")) {
+							reader.pending = append(reader.pending, '\n')
+						}
+						reader.pending = append(reader.pending, '\n')
+					}
+					reader.pending = append(reader.pending, final...)
+				}
+			}
+			if len(reader.pending) == 0 {
+				return 0, err
+			}
 		}
 	}
 	n := copy(data, reader.pending)
@@ -615,8 +640,12 @@ type textToolStream struct {
 	event    string
 	held     string
 
-	// Anthropic content block bookkeeping.
+	// Anthropic content block bookkeeping. openType records a block the
+	// upstream started but has not stopped, so an injected tool block never
+	// opens on top of one that is still open.
 	blockIndex int
+	openIndex  int
+	openType   string
 
 	// Responses output bookkeeping.
 	outputIndex int
@@ -650,8 +679,14 @@ func (stream *textToolStream) rewriteLine(line string) []byte {
 	raw := strings.TrimSpace(strings.TrimPrefix(body, "data:"))
 	held := stream.held
 	stream.held = ""
-	if raw == "" || raw == "[DONE]" {
+	if raw == "" {
 		return stream.withEvent(held, []byte(line))
+	}
+	if raw == "[DONE]" {
+		// Flush held calls before the client's end marker: a client stops
+		// reading at [DONE], so a frame after it would never run the tool.
+		final := stream.finish()
+		return append(final, stream.withEvent(held, []byte(line))...)
 	}
 	rewritten := stream.rewriteFrame(raw)
 	if string(rewritten) == raw {
@@ -783,9 +818,23 @@ func (stream *textToolStream) rewriteAnthropicFrame(raw string) []byte {
 		typeName = stream.event
 	}
 	switch typeName {
-	case "content_block_start", "content_block_stop":
-		if index, ok := payload["index"].(float64); ok && int(index) > stream.blockIndex {
-			stream.blockIndex = int(index)
+	case "content_block_start":
+		if index, ok := payload["index"].(float64); ok {
+			stream.openIndex = int(index)
+			stream.openType = jsonutil.StringAt(payload, "content_block", "type")
+			if stream.openIndex > stream.blockIndex {
+				stream.blockIndex = stream.openIndex
+			}
+		}
+		return []byte(raw)
+	case "content_block_stop":
+		if index, ok := payload["index"].(float64); ok {
+			if int(index) == stream.openIndex {
+				stream.openType = ""
+			}
+			if int(index) > stream.blockIndex {
+				stream.blockIndex = int(index)
+			}
 		}
 		return []byte(raw)
 	case "content_block_delta":
@@ -839,6 +888,23 @@ func (stream *textToolStream) anthropicFinish() []byte {
 		return nil
 	}
 	var out []byte
+	if stream.openType != "" {
+		// A truncated stream can end while a block is still open. Close it
+		// before opening an injected block, and give held text back to it.
+		if tail != "" && stream.openType == "text" {
+			out = append(out, anthropicEvent("content_block_delta", map[string]any{
+				"type":  "content_block_delta",
+				"index": stream.openIndex,
+				"delta": map[string]any{"type": "text_delta", "text": tail},
+			})...)
+			tail = ""
+		}
+		out = append(out, anthropicEvent("content_block_stop", map[string]any{
+			"type":  "content_block_stop",
+			"index": stream.openIndex,
+		})...)
+		stream.openType = ""
+	}
 	if tail != "" {
 		stream.blockIndex++
 		index := stream.blockIndex
@@ -1066,7 +1132,7 @@ func (stream *textToolStream) finish() []byte {
 func (stream *textToolStream) responsesFinish() []byte {
 	tail, calls := stream.scanner.push("", true)
 	stream.calls = append(stream.calls, calls...)
-	if len(stream.calls) == 0 {
+	if tail == "" && len(stream.calls) == 0 {
 		return nil
 	}
 	var out []byte
@@ -1085,7 +1151,7 @@ func (stream *textToolStream) responsesFinish() []byte {
 		item := map[string]any{
 			"id":        newToolCallID("fc_"),
 			"type":      "function_call",
-			"status":    "completed",
+			"status":    "in_progress",
 			"call_id":   newToolCallID("call_"),
 			"name":      call.Name,
 			"arguments": call.Arguments,
@@ -1093,6 +1159,14 @@ func (stream *textToolStream) responsesFinish() []byte {
 		stream.sequence++
 		out = append(out, responsesEvent("response.output_item.added", map[string]any{
 			"type":            "response.output_item.added",
+			"output_index":    index,
+			"sequence_number": stream.sequence,
+			"item":            item,
+		})...)
+		item["status"] = "completed"
+		stream.sequence++
+		out = append(out, responsesEvent("response.output_item.done", map[string]any{
+			"type":            "response.output_item.done",
 			"output_index":    index,
 			"sequence_number": stream.sequence,
 			"item":            item,

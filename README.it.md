@@ -211,7 +211,7 @@ L'oggetto facoltativo `models.anonymous_backoff` sospende la corsia anonima dopo
 
 ### Adattamento dei modelli gratuiti e ragionamento
 
-La compatibilità gratuita può inserire prompt e strumenti ufficiali OpenCode, rinominare gli strumenti sul collegamento upstream e ripristinarne i nomi nelle risposte. Riguarda anche modelli gratuiti serviti con chiave. Il gateway inoltra le chiamate, senza eseguire strumenti sul computer. System One è escluso dall'adattamento di messaggi e strumenti.
+La compatibilità gratuita può inserire prompt e strumenti ufficiali OpenCode, rinominare gli strumenti sul collegamento upstream e ripristinarne i nomi nelle risposte. Riguarda anche modelli gratuiti serviti con chiave. Il gateway inoltra le chiamate, senza eseguire strumenti sul computer. System One è escluso dall'adattamento di messaggi e strumenti. Se il modello scrive la chiamata come testo (dialetto XML `<tool_calls>`), il gateway la converte in una chiamata nativa, in streaming e non, invece di consegnare il blocco al client.
 
 Il prompt inserito include directory, workspace, piattaforma, modello e data UTC. Normalmente descrive il computer del gateway. Per i client remoti configura il testo in `upstream.prompt_environment`:
 

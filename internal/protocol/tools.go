@@ -40,16 +40,20 @@ type ToolRenames struct {
 	// name is never guessed between.
 	byCase  map[string]string
 	byShape map[string]string
+	// byWireShape folds the wire names themselves, so a response that drops a
+	// separator from an opaque name (mcp2fe8… for mcp_2fe8…) still resolves.
+	byWireShape map[string]string
 }
 
 // NewToolRenames returns an empty rename set.
 func NewToolRenames() *ToolRenames {
 	return &ToolRenames{
-		toWire:   map[string]string{},
-		toClient: map[string]string{},
-		official: map[string]string{},
-		byCase:   map[string]string{},
-		byShape:  map[string]string{},
+		toWire:      map[string]string{},
+		toClient:    map[string]string{},
+		official:    map[string]string{},
+		byCase:      map[string]string{},
+		byShape:     map[string]string{},
+		byWireShape: map[string]string{},
 	}
 }
 
@@ -133,10 +137,14 @@ func (r *ToolRenames) Add(client, wire string) {
 	if r.byShape == nil {
 		r.byShape = map[string]string{}
 	}
+	if r.byWireShape == nil {
+		r.byWireShape = map[string]string{}
+	}
 	r.toWire[client] = wire
 	r.toClient[wire] = client
 	r.bindFolded(r.byCase, strings.ToLower(client), client)
 	r.bindFolded(r.byShape, foldToolName(client), client)
+	r.bindFolded(r.byWireShape, foldToolName(wire), client)
 }
 
 // bindFolded records client under key in a folded map. An empty key names
@@ -225,6 +233,9 @@ func (r *ToolRenames) Resolve(wire string) (string, bool) {
 	}
 	if _, declared := r.toWire[client]; declared {
 		return client, client != wire
+	}
+	if match, ok := r.byWireShape[foldToolName(wire)]; ok && match != "" {
+		return match, match != wire
 	}
 	lower := strings.ToLower(client)
 	if match, ok := r.byCase[lower]; ok {

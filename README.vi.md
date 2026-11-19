@@ -211,7 +211,7 @@ Gửi `x-session-id` để tách hội thoại rõ ràng. Header phiên OpenCode
 
 ### Chỉnh dạng yêu cầu miễn phí và suy luận
 
-Tương thích mô hình miễn phí có thể chèn prompt/công cụ chính thức OpenCode, đổi tên công cụ trên đường truyền và khôi phục tên trong phản hồi. Mô hình miễn phí dùng key cũng chịu xử lý này. Gateway chỉ chuyển tiếp lời gọi, không chạy công cụ trên máy. System One không đi qua chỉnh dạng tin nhắn/công cụ.
+Tương thích mô hình miễn phí có thể chèn prompt/công cụ chính thức OpenCode, đổi tên công cụ trên đường truyền và khôi phục tên trong phản hồi. Mô hình miễn phí dùng key cũng chịu xử lý này. Gateway chỉ chuyển tiếp lời gọi, không chạy công cụ trên máy. System One không đi qua chỉnh dạng tin nhắn/công cụ. Nếu mô hình viết lời gọi dưới dạng văn bản (dạng XML `<tool_calls>`), gateway chuyển nó thành lời gọi gốc, cho cả phản hồi trực tuyến và không trực tuyến, thay vì chuyển nguyên khối đó cho client.
 
 Prompt chèn thêm có thư mục, workspace, nền tảng, mô hình và ngày UTC; mặc định mô tả máy gateway. Có thể đặt văn bản tương thích cho client từ xa trong `upstream.prompt_environment`:
 

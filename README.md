@@ -213,7 +213,7 @@ An optional `models.anonymous_backoff` object pauses the anonymous lane after re
 
 ### Free-model request shaping and reasoning
 
-Free-model compatibility can inject the official OpenCode system prompt and tool definitions, rename client tools on the wire, and restore their names in responses. This also affects free models served by keys. The gateway relays tool calls; it does not execute tools on the host. System One is excluded from message/tool shaping.
+Free-model compatibility can inject the official OpenCode system prompt and tool definitions, rename client tools on the wire, and restore their names in responses. This also affects free models served by keys. The gateway relays tool calls; it does not execute tools on the host. System One is excluded from message/tool shaping. A model that writes its call as text (the `<tool_calls>` XML dialect) has it converted into a native call, in streaming and non-streaming responses, instead of passing the block to the client.
 
 The injected prompt includes a working directory, workspace, platform, model, and UTC date. By default these describe the gateway host. Set `upstream.prompt_environment` to supply compatibility text for remote clients:
 

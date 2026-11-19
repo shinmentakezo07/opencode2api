@@ -457,7 +457,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			w.Header().Set("Content-Type", "text/event-stream; charset=utf-8")
 			w.Header().Set("Cache-Control", "no-cache")
 			w.Header().Set("X-Accel-Buffering", "no")
-			streamBody := wire.RenameStreamReader(resp.Body, upstreamRoute.Protocol, toolRenames)
+			streamBody := wire.TextToolStreamReader(wire.RenameStreamReader(resp.Body, upstreamRoute.Protocol, toolRenames), upstreamRoute.Protocol, toolRenames)
 			var usage wire.Usage
 			var usageReported bool
 			if external == upstreamRoute.Protocol {
@@ -507,6 +507,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			responseBody = collapsed
 		}
 		responseBody = wire.RenameResponseTool(responseBody, upstreamRoute.Protocol, toolRenames)
+		responseBody = wire.RewriteTextToolCalls(responseBody, upstreamRoute.Protocol, toolRenames)
 		if usage, reported := wire.ResponseUsage(upstreamRoute.Protocol, responseBody); meta != nil {
 			meta.Usage, meta.UsageReported = usage, reported
 		}

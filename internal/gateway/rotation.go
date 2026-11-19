@@ -340,7 +340,7 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 			g.monitor.BeginStream()
 			defer g.monitor.EndStream()
 		}
-		streamBody := wire.RenameStreamReader(resp.Body, route.Protocol, toolRenames)
+		streamBody := wire.TextToolStreamReader(wire.RenameStreamReader(resp.Body, route.Protocol, toolRenames), route.Protocol, toolRenames)
 		usage, reported, committed, err := wire.RotationStream(original.Context(), w, streamBody, route.Protocol, external, alias, ready)
 		if meta != nil {
 			meta.Usage = usage
@@ -379,6 +379,7 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 	}
 	if err == nil {
 		b = wire.RenameResponseTool(b, route.Protocol, toolRenames)
+		b = wire.RewriteTextToolCalls(b, route.Protocol, toolRenames)
 	}
 	var document map[string]any
 	if err == nil {

@@ -1436,10 +1436,27 @@ func (stream *textToolStream) chatNeedsScan(raw string) bool {
 	if stream.scanner.pending != "" {
 		return true
 	}
-	if strings.Contains(raw, "finish_reason") {
+	if hasChatFinishReason(raw) {
 		return true
 	}
 	return strings.Contains(raw, "<") || strings.Contains(raw, `\u003c`)
+}
+
+// hasChatFinishReason reports whether a Chat frame carries a non-null
+// finish_reason. OpenAI-compatible streams put "finish_reason":null on every
+// content delta, so the field name alone is not a terminal signal.
+func hasChatFinishReason(raw string) bool {
+	const key = `"finish_reason"`
+	index := strings.Index(raw, key)
+	if index < 0 {
+		return false
+	}
+	rest := strings.TrimLeft(raw[index+len(key):], " \t\r\n")
+	if !strings.HasPrefix(rest, ":") {
+		return false
+	}
+	rest = strings.TrimLeft(rest[1:], " \t\r\n")
+	return !strings.HasPrefix(rest, "null")
 }
 
 // anthropicNeedsScan reports whether an Anthropic frame can change the scanner

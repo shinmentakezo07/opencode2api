@@ -382,7 +382,7 @@ func (renamer *streamToolRenamer) rewriteFrame(raw string) []byte {
 		}
 		return RenameResponseTool([]byte(raw), renamer.protocol, renamer.renames)
 	}
-	if !strings.Contains(raw, `"tool_calls"`) && !strings.Contains(raw, `"finish_reason"`) {
+	if !strings.Contains(raw, `"tool_calls"`) && !hasChatFinishReason(raw) {
 		return []byte(raw)
 	}
 	return renamer.rewriteChatFrame(raw)

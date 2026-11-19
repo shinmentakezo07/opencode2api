@@ -73,7 +73,7 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Prima della sostituzione salva configurazione e stato attivi. L'entrypoint esegue il servizio senza privilegi e cambia l'esatto listener API dell'esempio `127.0.0.1:8080` in `0.0.0.0:8080` soltanto durante l'inizializzazione. Compose usa filesystem radice in sola lettura, volume di stato scrivibile e tmpfs `/tmp`. Le porte pubblicate si legano per default a tutte le interfacce host; per uso locale modifica `ports` in `127.0.0.1:8080:8080` e `127.0.0.1:8081:8081`.
+Prima della sostituzione salva configurazione e stato attivi. L'entrypoint esegue il servizio senza privilegi e cambia l'esatto listener API dell'esempio `127.0.0.1:8080` in `0.0.0.0:8080` soltanto durante l'inizializzazione. Se non esiste un seed fornito dall'host e viene usato l'esempio integrato, il seed abilita anche `anonymous: true` così il container si avvia senza chiavi; il traffico anonimo può essere bloccato a monte, quindi aggiungi una chiave Zen/Go o collega Go/Zen OAuth nella WebUI e poi disattiva l'accesso anonimo se non desiderato. I seed forniti dall'operatore mantengono la propria impostazione `anonymous`. Compose usa filesystem radice in sola lettura, volume di stato scrivibile e tmpfs `/tmp`. Le porte pubblicate si legano per default a tutte le interfacce host; per uso locale modifica `ports` in `127.0.0.1:8080:8080` e `127.0.0.1:8081:8081`.
 
 | Variabile Compose | Predefinito | Effetto |
 | --- | --- | --- |

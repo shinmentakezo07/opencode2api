@@ -73,7 +73,7 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Sao lưu cấu hình/trạng thái đang dùng trước khi thay. Entrypoint chạy dịch vụ bằng người dùng không đặc quyền và chỉ đổi đúng giá trị API mẫu `127.0.0.1:8080` thành `0.0.0.0:8080` lúc tạo cấu hình ban đầu. Compose có filesystem gốc chỉ đọc, volume trạng thái ghi được và tmpfs `/tmp`. Cổng mặc định bind mọi giao diện host; chỉ dùng cục bộ thì đổi `ports` thành `127.0.0.1:8080:8080`, `127.0.0.1:8081:8081`.
+Sao lưu cấu hình/trạng thái đang dùng trước khi thay. Entrypoint chạy dịch vụ bằng người dùng không đặc quyền và chỉ đổi đúng giá trị API mẫu `127.0.0.1:8080` thành `0.0.0.0:8080` lúc tạo cấu hình ban đầu. Nếu không có seed từ host và dùng bản mẫu tích hợp, seed còn bật `anonymous: true` để container khởi động không cần key; lưu lượng ẩn danh có thể bị chặn ở thượng nguồn, hãy thêm Zen/Go key hoặc kết nối Go/Zen OAuth trong WebUI rồi tắt truy cập ẩn danh nếu không cần. Seed do người vận hành cung cấp giữ nguyên thiết lập `anonymous` của nó. Compose có filesystem gốc chỉ đọc, volume trạng thái ghi được và tmpfs `/tmp`. Cổng mặc định bind mọi giao diện host; chỉ dùng cục bộ thì đổi `ports` thành `127.0.0.1:8080:8080`, `127.0.0.1:8081:8081`.
 
 | Biến Compose | Mặc định | Tác dụng |
 | --- | --- | --- |

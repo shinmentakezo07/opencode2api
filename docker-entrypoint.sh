@@ -29,6 +29,18 @@ seed_container_listen() {
     fi
 }
 
+# The example ships with no upstream credential and anonymous access disabled,
+# which config validation rejects. Only the untouched example seed opts into
+# the anonymous lane so a fresh container boots to the WebUI, where keys or a
+# Go/Zen OAuth connection can be configured. Operator-provided seeds are never
+# modified beyond the listen rewrite above.
+seed_example_anonymous() {
+    if grep -q '"anonymous"[[:space:]]*:[[:space:]]*false' "$1"; then
+        sed -i 's|"anonymous"[[:space:]]*:[[:space:]]*false|"anonymous": true|' "$1"
+        printf '%s\n' "Enabled anonymous access in the seeded $1 so the gateway can start without keys; anonymous traffic may be blocked upstream. Add a Zen/Go key or connect Go/Zen OAuth in the WebUI."
+    fi
+}
+
 if [ ! -f "$config_path" ]; then
     mkdir -p "$(dirname "$config_path")"
     if [ -n "$config_seed_path" ] && [ -f "$config_seed_path" ]; then
@@ -38,8 +50,9 @@ if [ ! -f "$config_path" ]; then
     else
         cp /app/config.example.json "$config_path"
         seed_container_listen "$config_path"
+        seed_example_anonymous "$config_path"
         printf '%s\n' \
-            "config.json not found; created $config_path. Set API keys or enable anonymous mode, and change the WebUI password before use."
+            "config.json not found; created $config_path. Replace the placeholder server key and change the WebUI password before use."
     fi
 fi
 

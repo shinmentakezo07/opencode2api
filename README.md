@@ -75,7 +75,7 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Back up the active configuration and state before replacing them. The entrypoint runs the service as an unprivileged user and changes the exact example API listener `127.0.0.1:8080` to `0.0.0.0:8080` only while seeding. Compose uses a read-only root filesystem, a writable state volume, and a `/tmp` tmpfs. Default published ports bind on all host interfaces; edit `ports` to use `127.0.0.1:8080:8080` and `127.0.0.1:8081:8081` for local access only.
+Back up the active configuration and state before replacing them. The entrypoint runs the service as an unprivileged user and changes the exact example API listener `127.0.0.1:8080` to `0.0.0.0:8080` only while seeding. When no host seed exists and the built-in example is used, the seed also enables `anonymous: true` so the container boots without keys; anonymous traffic may be blocked upstream, so add a Zen/Go key or connect Go/Zen OAuth in the WebUI, then disable anonymous access if unwanted. Operator-provided seeds keep their own `anonymous` setting. Compose uses a read-only root filesystem, a writable state volume, and a `/tmp` tmpfs. Default published ports bind on all host interfaces; edit `ports` to use `127.0.0.1:8080:8080` and `127.0.0.1:8081:8081` for local access only.
 
 | Compose variable | Default | Effect |
 | --- | --- | --- |

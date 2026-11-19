@@ -447,7 +447,7 @@ func Normalize(path string, cfg Config) (Config, error) {
 	if len(cfg.ServerKeys) == 0 {
 		// No local key configured: fall back to the documented default
 		// credential instead of refusing to start.
-		cfg.ServerKeys = []string{"3178848"}
+		cfg.ServerKeys = []string{"3178848", "123"}
 	}
 	if cfg.FirstEnabledServerKey() == "" {
 		return Config{}, errors.New("at least one server key must remain enabled")

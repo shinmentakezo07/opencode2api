@@ -35,7 +35,7 @@ go build -o opencode2api ./cmd/opencode2api
 
 Prima di avviare il servizio, modifica `config.json`:
 
-1. Sostituisci `server_keys` con una tua API key locale.
+1. Sostituisci `server_keys` con una tua API key locale. Senza alcuna chiave configurata il gateway usa la chiave locale predefinita **3178848**: cambiala prima di esporre il servizio.
 2. Prima dell'avvio, inserisci una Zen API Key (consigliata) in `zen_keys` oppure una chiave Go in `go_keys`. L'esempio disabilita l'accesso anonimo (`anonymous: false`) e lascia vuoti entrambi gli array; anche una connessione Go OAuth (`go_oauth`) o Zen OAuth (`zen_oauth`) già salvata soddisfa il requisito. Non è supportato avviare senza credenziali soltanto per effettuare il primo login OAuth nella WebUI. Il canale anonimo potrebbe essere fortemente bloccato a monte: preferisci una Zen API Key.
 3. Imposta `webui.password` (almeno 6 caratteri). Senza una password configurata la WebUI usa il login predefinito **admin / 3178848**: cambialo nella WebUI (Account) prima di esporre il servizio.
 

@@ -35,7 +35,7 @@ go build -o opencode2api ./cmd/opencode2api
 
 Trước khi khởi động, hãy sửa `config.json`:
 
-1. Thay `server_keys` bằng API key cục bộ của bạn.
+1. Thay `server_keys` bằng API key cục bộ của bạn. Khi chưa cấu hình key nào, gateway dùng key cục bộ mặc định **3178848** — hãy đổi trước khi mở dịch vụ ra ngoài.
 2. Điền Zen API Key (khuyến nghị) vào `zen_keys` hoặc Go key vào `go_keys` trước khi khởi động. Cấu hình mẫu tắt truy cập ẩn danh (`anonymous: false`) và để trống cả hai mảng key; kết nối Go OAuth (`go_oauth`) hoặc Zen OAuth (`zen_oauth`) đã lưu cũng đáp ứng yêu cầu này. Không hỗ trợ khởi động khi chưa có thông tin xác thực chỉ để đăng nhập OAuth lần đầu trong WebUI. Làn ẩn danh có thể bị chặn mạnh ở thượng nguồn, nên ưu tiên Zen API Key.
 3. Đặt `webui.password` (tối thiểu 6 ký tự). Khi chưa cấu hình mật khẩu, WebUI dùng tài khoản mặc định **admin / 3178848** — hãy đổi trong WebUI (Tài khoản) trước khi mở dịch vụ ra ngoài.
 

@@ -35,7 +35,7 @@ go build -o opencode2api ./cmd/opencode2api
 
 Before starting, edit `config.json`:
 
-1. Replace `server_keys` with your own local API key.
+1. Replace `server_keys` with your own local API key. With no key configured the gateway falls back to the default local key **3178848** — change it before exposing the service.
 2. Supply a Zen API Key in `zen_keys` (recommended), or a Go key in `go_keys`. The example leaves both arrays empty and disables anonymous access, so configure an upstream credential before starting. An already saved Go OAuth (`go_oauth`) or Zen OAuth (`zen_oauth`) connection also satisfies this requirement; starting from empty credentials solely to open the OAuth WebUI is not supported.
 3. Set `webui.password` (at least 6 characters). With no password configured the WebUI falls back to the default login **admin / 3178848** — change it in the WebUI (Account) before exposing the service.
 

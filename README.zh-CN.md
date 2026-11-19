@@ -35,7 +35,7 @@ go build -o opencode2api ./cmd/opencode2api
 
 启动前编辑 `config.json`：
 
-1. 将 `server_keys` 替换为自己的本地 API Key。
+1. 将 `server_keys` 替换为自己的本地 API Key。未配置任何 Key 时网关默认使用本地 Key **3178848**——对外暴露服务前务必修改。
 2. 在 `zen_keys` 填入 Zen API Key（推荐），或在 `go_keys` 填入 Go Key。示例关闭匿名通道，且两个上游 Key 数组为空，必须先配置上游凭证才能启动；已保存的 Go OAuth（`go_oauth`）或 Zen OAuth（`zen_oauth`）连接也满足此要求。不支持在凭证全空时先启动服务、再进入 WebUI 完成首次 OAuth 登录。
 3. 设置 `webui.password`（至少 6 字符）。未配置密码时，WebUI 使用默认账号 **admin / 3178848** 登录——对外暴露服务前请在 WebUI（账号安全）中修改。
 

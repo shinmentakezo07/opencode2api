@@ -23,9 +23,15 @@ fi
 # outside a container through published ports. Rewrite only that exact default
 # while seeding; any other address is left exactly as the operator wrote it.
 seed_container_listen() {
+    if grep -q '"listen"[[:space:]]*:[[:space:]]*"127.0.0.1:8081"' "$1"; then
+        sed -i 's|"listen"[[:space:]]*:[[:space:]]*"127.0.0.1:8081"|"listen": "0.0.0.0:8081"|' "$1"
+        printf '%s\n' "Seeded $1 with listen 0.0.0.0:8081 so it is reachable through published ports."
+    fi
+    # Seeds from older releases still carry the split-port 8080 API default;
+    # move that exact value to the shared 8081 listener too.
     if grep -q '"listen"[[:space:]]*:[[:space:]]*"127.0.0.1:8080"' "$1"; then
-        sed -i 's|"listen"[[:space:]]*:[[:space:]]*"127.0.0.1:8080"|"listen": "0.0.0.0:8080"|' "$1"
-        printf '%s\n' "Seeded $1 with listen 0.0.0.0:8080 so it is reachable through published ports."
+        sed -i 's|"listen"[[:space:]]*:[[:space:]]*"127.0.0.1:8080"|"listen": "0.0.0.0:8081"|' "$1"
+        printf '%s\n' "Seeded $1 with listen 0.0.0.0:8081 (legacy 8080 API default moved to the shared port)."
     fi
 }
 

@@ -45,9 +45,9 @@ Trước khi khởi động, hãy sửa `config.json`:
 
 Trên Windows, dùng `Copy-Item config.example.json config.json`, build bằng `go build -o opencode2api.exe ./cmd/opencode2api`, rồi chạy `.\opencode2api.exe -config config.json`.
 
-File mẫu lắng nghe `127.0.0.1:8080` cho API và `0.0.0.0:8081` cho WebUI. Mở `http://localhost:8081` ở máy cục bộ. Hãy giới hạn quyền truy cập quản trị và dùng reverse proxy HTTPS khi truy cập qua mạng.
+File mẫu phục vụ cả API và WebUI cùng trên `127.0.0.1:8081`. Mở `http://localhost:8081` ở máy cục bộ; client tương thích OpenAI dùng `http://127.0.0.1:8081/v1`. Hãy giới hạn quyền truy cập quản trị và dùng reverse proxy HTTPS khi truy cập qua mạng.
 
-Để phục vụ cả hai trên một cổng, đặt `webui.listen` cùng địa chỉ với `listen` (ví dụ cả hai là `0.0.0.0:8080`): `/v1/*` và `/healthz` vẫn thuộc gateway, còn WebUI cùng các endpoint quản trị `/api/*` trả lời mọi đường dẫn khác trên cổng đó. Khi ấy WebUI ở `http://localhost:8080`. Dùng chung cổng cũng để lộ bảng quản trị ở bất cứ nơi nào API truy cập được, nên hãy đặt mật khẩu mạnh và giới hạn truy cập tương ứng.
+Chỉ cần `webui.listen` bằng `listen` là dùng chung một cổng: `/v1/*` và `/healthz` vẫn thuộc gateway, còn WebUI cùng các endpoint quản trị `/api/*` trả lời mọi đường dẫn khác. Muốn tách lại, đặt `webui.listen` địa chỉ khác (ví dụ `0.0.0.0:8082`). Dùng chung cổng cũng để lộ bảng quản trị ở bất cứ nơi nào API truy cập được, nên hãy đặt mật khẩu mạnh và giới hạn truy cập tương ứng.
 
 Tuỳ chọn dòng lệnh:
 
@@ -61,7 +61,7 @@ Thư mục cấu hình phải ghi được để thực hiện việc chuyển m
 
 ## Docker và Compose
 
-Image phát hành là `ghcr.io/jasonxu114514/opencode2api`. Chuẩn bị `config.json` trước khi chạy. Để dùng cổng xuất bản, listener API/WebUI bên trong phải là `0.0.0.0:8080`, `0.0.0.0:8081`; giới hạn truy cập bằng địa chỉ bind phía host và HTTPS khi cần.
+Image phát hành là `ghcr.io/jasonxu114514/opencode2api`. Chuẩn bị `config.json` trước khi chạy. Để dùng cổng xuất bản, listener chung bên trong phải là `0.0.0.0:8081`; giới hạn truy cập bằng địa chỉ bind phía host và HTTPS khi cần.
 
 ```bash
 docker compose up -d
@@ -75,17 +75,16 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Sao lưu cấu hình/trạng thái đang dùng trước khi thay. Entrypoint chạy dịch vụ bằng người dùng không đặc quyền và chỉ đổi đúng giá trị API mẫu `127.0.0.1:8080` thành `0.0.0.0:8080` lúc tạo cấu hình ban đầu. Nếu không có seed từ host và dùng bản mẫu tích hợp, seed còn bật `anonymous: true` để container khởi động không cần key; lưu lượng ẩn danh có thể bị chặn ở thượng nguồn, hãy thêm Zen/Go key hoặc kết nối Go/Zen OAuth trong WebUI rồi tắt truy cập ẩn danh nếu không cần. Seed do người vận hành cung cấp giữ nguyên thiết lập `anonymous` của nó. Compose có filesystem gốc chỉ đọc, volume trạng thái ghi được và tmpfs `/tmp`. Cổng mặc định bind mọi giao diện host; chỉ dùng cục bộ thì đổi `ports` thành `127.0.0.1:8080:8080`, `127.0.0.1:8081:8081`.
+Sao lưu cấu hình/trạng thái đang dùng trước khi thay. Entrypoint chạy dịch vụ bằng người dùng không đặc quyền và chỉ đổi đúng giá trị API mẫu `127.0.0.1:8081` (hoặc giá trị cũ `127.0.0.1:8080`) thành `0.0.0.0:8081` lúc tạo cấu hình ban đầu. Nếu không có seed từ host và dùng bản mẫu tích hợp, seed còn bật `anonymous: true` để container khởi động không cần key; lưu lượng ẩn danh có thể bị chặn ở thượng nguồn, hãy thêm Zen/Go key hoặc kết nối Go/Zen OAuth trong WebUI rồi tắt truy cập ẩn danh nếu không cần. Seed do người vận hành cung cấp giữ nguyên thiết lập `anonymous` của nó. Compose có filesystem gốc chỉ đọc, volume trạng thái ghi được và tmpfs `/tmp`. Cổng mặc định bind mọi giao diện host; chỉ dùng cục bộ thì đổi `ports` thành `127.0.0.1:8081:8081`.
 
 | Biến Compose | Mặc định | Tác dụng |
 | --- | --- | --- |
 | `OPENCODE2API_VERSION` | `latest` | Tag image; ghim tag phát hành để cố định phiên bản. |
-| `OPENCODE2API_PORT` | `8080` | Cổng API phía host. |
-| `OPENCODE2API_WEBUI_PORT` | `8081` | Cổng quản trị phía host. |
+| `OPENCODE2API_PORT` | `8081` | Cổng host xuất bản cho listener chung API/WebUI. |
 | `OPENCODE2API_LISTEN` | Chưa đặt | Ghi đè listener API trong container. |
 | `OPENCODE2API_WEBUI_LISTEN` | Chưa đặt | Ghi đè listener quản trị trong container. |
 
-Hai biến cuối thành `LISTEN_ADDRESS`, `WEBUI_LISTEN_ADDRESS` trong container; rỗng thì theo cấu hình hoạt động. Đổi cổng host không đổi listener bên trong. Nếu đổi cổng API bên trong, cập nhật mapping và health check image vốn dùng 8080. `proxyfile` phải được mount tại đường dẫn container đã cấu hình.
+Hai biến cuối thành `LISTEN_ADDRESS`, `WEBUI_LISTEN_ADDRESS` trong container; rỗng thì theo cấu hình hoạt động. Đổi cổng host không đổi listener bên trong. Nếu đổi cổng bên trong, cập nhật mapping và health check image vốn dùng 8081. `proxyfile` phải được mount tại đường dẫn container đã cấu hình.
 
 Để dùng image tự biên dịch:
 
@@ -93,7 +92,7 @@ Hai biến cuối thành `LISTEN_ADDRESS`, `WEBUI_LISTEN_ADDRESS` trong containe
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
-  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8081:8081 \
+  -p 127.0.0.1:8081:8081 \
   -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
   -v "$PWD/config.json:/run/config/opencode2api.json:ro" \
   -v opencode2api-state:/var/lib/opencode2api \
@@ -104,7 +103,7 @@ WARP cần UDP ra Cloudflare cổng `2408`, không cần host networking hay quy
 
 ## Gọi API
 
-Đây là các tuyến tương thích hiện có. Với client tương thích OpenAI, đặt URL gốc là `http://127.0.0.1:8080/v1`; quản trị dùng listener riêng.
+Đây là các tuyến tương thích hiện có. Với client tương thích OpenAI, đặt URL gốc là `http://127.0.0.1:8081/v1`; quản trị mặc định dùng chung listener.
 
 | Phương thức | Đường dẫn | Hành vi |
 | --- | --- | --- |
@@ -120,10 +119,10 @@ Mọi tuyến `/v1/*` yêu cầu giá trị `server_keys` đang bật qua `Autho
 Lấy ID mô hình thực tế trước khi gửi yêu cầu:
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
+curl http://127.0.0.1:8081/v1/models \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY'
 
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:8081/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"Xin chào"}]}'

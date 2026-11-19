@@ -47,9 +47,9 @@ go build -o opencode2api ./cmd/opencode2api
 
 Windows 下使用 `Copy-Item config.example.json config.json` 复制配置，执行 `go build -o opencode2api.exe ./cmd/opencode2api` 编译，再运行 `.\opencode2api.exe -config config.json`。
 
-示例配置的 API 监听 `127.0.0.1:8080`，WebUI 监听 `0.0.0.0:8081`。本机可访问 `http://localhost:8081`。通过网络访问管理界面时，请限制访问范围，并使用 HTTPS 反向代理。
+示例配置将 API 与 WebUI 一并监听在 `127.0.0.1:8081`。本机访问 `http://localhost:8081`；OpenAI 兼容客户端使用 `http://127.0.0.1:8081/v1`。通过网络访问管理界面时，请限制访问范围，并使用 HTTPS 反向代理。
 
-需要共用一个端口时，把 `webui.listen` 设为与 `listen` 相同的地址（例如都是 `0.0.0.0:8080`）：`/v1/*` 与 `/healthz` 仍走网关，WebUI 及其 `/api/*` 管理接口接管该端口的其余路径，管理界面即 `http://localhost:8080`。共用端口意味着 API 可达之处管理控制台也可达，务必使用强密码并限制访问范围。
+只要 `webui.listen` 与 `listen` 相同即共用一个端口：`/v1/*` 与 `/healthz` 仍走网关，WebUI 及其 `/api/*` 管理接口接管其余路径。需要拆分时，给 `webui.listen` 设不同地址（例如 `0.0.0.0:8082`）。共用端口意味着 API 可达之处管理控制台也可达，务必使用强密码并限制访问范围。
 
 命令行参数：
 
@@ -63,7 +63,7 @@ Windows 下使用 `Copy-Item config.example.json config.json` 复制配置，执
 
 ## Docker 与 Compose
 
-已发布镜像为 `ghcr.io/jasonxu114514/opencode2api`。先按前文准备 `config.json`。需要通过发布端口访问时，容器内部 API/WebUI 应监听 `0.0.0.0:8080`、`0.0.0.0:8081`；访问范围由宿主机端口绑定及必要的 HTTPS 入口限制。
+已发布镜像为 `ghcr.io/jasonxu114514/opencode2api`。先按前文准备 `config.json`。需要通过发布端口访问时，容器内部共用监听应为 `0.0.0.0:8081`；访问范围由宿主机端口绑定及必要的 HTTPS 入口限制。
 
 ```bash
 docker compose up -d
@@ -77,17 +77,16 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-覆盖前先备份实际配置与状态。入口脚本以普通用户运行服务，仅在初始化时把示例 API 的准确值 `127.0.0.1:8080` 改为 `0.0.0.0:8080`。若无宿主种子配置而使用内置示例，初始化还会写入 `anonymous: true`，使容器无密钥也能启动；匿名流量可能被上游封堵，请在 WebUI 配置 Zen/Go 密钥或连接 Go/Zen OAuth，不需要时再关闭匿名。操作者提供的种子配置保留其自身的 `anonymous` 设置。Compose 使用只读根文件系统、可写状态卷与 `/tmp` tmpfs。发布端口默认绑定宿主全部接口；仅本机访问时，将 `ports` 改为 `127.0.0.1:8080:8080`、`127.0.0.1:8081:8081`。
+覆盖前先备份实际配置与状态。入口脚本以普通用户运行服务，仅在初始化时把示例 API 的准确值 `127.0.0.1:8081`（或旧版 `127.0.0.1:8080`）改为 `0.0.0.0:8081`。若无宿主种子配置而使用内置示例，初始化还会写入 `anonymous: true`，使容器无密钥也能启动；匿名流量可能被上游封堵，请在 WebUI 配置 Zen/Go 密钥或连接 Go/Zen OAuth，不需要时再关闭匿名。操作者提供的种子配置保留其自身的 `anonymous` 设置。Compose 使用只读根文件系统、可写状态卷与 `/tmp` tmpfs。发布端口默认绑定宿主全部接口；仅本机访问时，将 `ports` 改为 `127.0.0.1:8081:8081`。
 
 | Compose 变量 | 默认值 | 作用 |
 | --- | --- | --- |
 | `OPENCODE2API_VERSION` | `latest` | 镜像标签；固定版本时指定发行标签。 |
-| `OPENCODE2API_PORT` | `8080` | 宿主 API 端口。 |
-| `OPENCODE2API_WEBUI_PORT` | `8081` | 宿主管理端口。 |
+| `OPENCODE2API_PORT` | `8081` | 宿主发布端口（API/WebUI 共用监听）。 |
 | `OPENCODE2API_LISTEN` | 未设置 | 显式覆盖容器 API 监听。 |
 | `OPENCODE2API_WEBUI_LISTEN` | 未设置 | 显式覆盖容器管理监听。 |
 
-后两项在容器内为 `LISTEN_ADDRESS`、`WEBUI_LISTEN_ADDRESS`，为空时沿用实际配置。更改宿主端口不更改内部监听；更改内部 API 端口还须修改映射及默认检查 8080 的镜像健康检查。`proxyfile` 必须挂载到配置的容器内路径。
+后两项在容器内为 `LISTEN_ADDRESS`、`WEBUI_LISTEN_ADDRESS`，为空时沿用实际配置。更改宿主端口不更改内部监听；更改内部端口还须修改映射及默认检查 8081 的镜像健康检查。`proxyfile` 必须挂载到配置的容器内路径。
 
 需要本地镜像时：
 
@@ -95,7 +94,7 @@ docker compose restart
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
-  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8081:8081 \
+  -p 127.0.0.1:8081:8081 \
   -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
   -v "$PWD/config.json:/run/config/opencode2api.json:ro" \
   -v opencode2api-state:/var/lib/opencode2api \
@@ -106,7 +105,7 @@ WARP 需要向 Cloudflare `2408` 端口发送 UDP，不需要 host 网络或额�
 
 ## 调用 API
 
-以下是现有兼容接口。OpenAI 兼容客户端的 Base URL 可填 `http://127.0.0.1:8080/v1`；管理接口位于另一监听端口。
+以下是现有兼容接口。OpenAI 兼容客户端的 Base URL 可填 `http://127.0.0.1:8081/v1`；管理接口默认共用同一监听。
 
 | 方法 | 路径 | 行为 |
 | --- | --- | --- |
@@ -122,10 +121,10 @@ WARP 需要向 Cloudflare `2408` 端口发送 UDP，不需要 host 网络或额�
 先查询实际可用的模型 ID：
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
+curl http://127.0.0.1:8081/v1/models \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY'
 
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:8081/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"你好"}]}'

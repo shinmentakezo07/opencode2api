@@ -47,9 +47,9 @@ Before starting, edit `config.json`:
 
 On Windows, use `Copy-Item config.example.json config.json`, build with `go build -o opencode2api.exe ./cmd/opencode2api`, then run `.\opencode2api.exe -config config.json`.
 
-The example listens on `127.0.0.1:8080` for the API and `0.0.0.0:8081` for the WebUI. Open `http://localhost:8081` locally. Restrict management access and use an HTTPS reverse proxy when accessing it over a network.
+The example serves the API and the WebUI together on `127.0.0.1:8081`. Open `http://localhost:8081` locally; OpenAI-compatible clients use `http://127.0.0.1:8081/v1`. Restrict management access and use an HTTPS reverse proxy when accessing it over a network.
 
-To serve both on one port, set `webui.listen` to the same address as `listen` (for example both `0.0.0.0:8080`): `/v1/*` and `/healthz` stay on the gateway, and the WebUI with its `/api/*` management endpoints answers every other path on that port. The WebUI then lives at `http://localhost:8080`. Sharing the port also exposes the management console wherever the API is reachable, so keep the password strong and restrict access accordingly.
+Sharing one port works whenever `webui.listen` equals `listen`: `/v1/*` and `/healthz` stay on the gateway, and the WebUI with its `/api/*` management endpoints answers every other path. To split them again, give `webui.listen` a different address (for example `0.0.0.0:8082`). Sharing the port exposes the management console wherever the API is reachable, so keep the password strong and restrict access accordingly.
 
 Command-line options:
 
@@ -63,7 +63,7 @@ The configuration directory must be writable for password migration, configurati
 
 ## Docker and Compose
 
-The published image is `ghcr.io/jasonxu114514/opencode2api`. Prepare `config.json` as above before starting. For published container ports, keep the internal API/WebUI listeners on `0.0.0.0:8080` and `0.0.0.0:8081`; restrict access using host-side port bindings and HTTPS where needed.
+The published image is `ghcr.io/jasonxu114514/opencode2api`. Prepare `config.json` as above before starting. For published container ports, keep the shared internal listener on `0.0.0.0:8081`; restrict access using host-side port bindings and HTTPS where needed.
 
 ```bash
 docker compose up -d
@@ -77,17 +77,16 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Back up the active configuration and state before replacing them. The entrypoint runs the service as an unprivileged user and changes the exact example API listener `127.0.0.1:8080` to `0.0.0.0:8080` only while seeding. When no host seed exists and the built-in example is used, the seed also enables `anonymous: true` so the container boots without keys; anonymous traffic may be blocked upstream, so add a Zen/Go key or connect Go/Zen OAuth in the WebUI, then disable anonymous access if unwanted. Operator-provided seeds keep their own `anonymous` setting. Compose uses a read-only root filesystem, a writable state volume, and a `/tmp` tmpfs. Default published ports bind on all host interfaces; edit `ports` to use `127.0.0.1:8080:8080` and `127.0.0.1:8081:8081` for local access only.
+Back up the active configuration and state before replacing them. The entrypoint runs the service as an unprivileged user and changes the exact example API listener `127.0.0.1:8081` (or the legacy `127.0.0.1:8080`) to `0.0.0.0:8081` only while seeding. When no host seed exists and the built-in example is used, the seed also enables `anonymous: true` so the container boots without keys; anonymous traffic may be blocked upstream, so add a Zen/Go key or connect Go/Zen OAuth in the WebUI, then disable anonymous access if unwanted. Operator-provided seeds keep their own `anonymous` setting. Compose uses a read-only root filesystem, a writable state volume, and a `/tmp` tmpfs. The default published port binds on all host interfaces; edit `ports` to use `127.0.0.1:8081:8081` for local access only.
 
 | Compose variable | Default | Effect |
 | --- | --- | --- |
 | `OPENCODE2API_VERSION` | `latest` | Image tag; pin a release tag for a fixed version. |
-| `OPENCODE2API_PORT` | `8080` | Published host API port. |
-| `OPENCODE2API_WEBUI_PORT` | `8081` | Published host management port. |
+| `OPENCODE2API_PORT` | `8081` | Published host port for the shared API/WebUI listener. |
 | `OPENCODE2API_LISTEN` | Unset | Explicit container API listener override. |
 | `OPENCODE2API_WEBUI_LISTEN` | Unset | Explicit container management listener override. |
 
-The last two become `LISTEN_ADDRESS` and `WEBUI_LISTEN_ADDRESS` in the container. Empty values defer to the active config. Changing host ports does not change internal listeners. If the internal API port changes, update both the port mapping and image health check, which uses 8080. A `proxyfile` must be mounted at its configured container path.
+The last two become `LISTEN_ADDRESS` and `WEBUI_LISTEN_ADDRESS` in the container. Empty values defer to the active config. Changing the host port does not change internal listeners. If the internal port changes, update both the port mapping and image health check, which uses 8081. A `proxyfile` must be mounted at its configured container path.
 
 Build and run a local image if needed:
 
@@ -95,7 +94,7 @@ Build and run a local image if needed:
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
-  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8081:8081 \
+  -p 127.0.0.1:8081:8081 \
   -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
   -v "$PWD/config.json:/run/config/opencode2api.json:ro" \
   -v opencode2api-state:/var/lib/opencode2api \
@@ -106,7 +105,7 @@ WARP needs outbound UDP to Cloudflare port `2408`; the image does not need host 
 
 ## Call the API
 
-The following are the existing compatibility routes. Set an OpenAI-compatible client's base URL to `http://127.0.0.1:8080/v1`; management uses its separate listener.
+The following are the existing compatibility routes. Set an OpenAI-compatible client's base URL to `http://127.0.0.1:8081/v1`; management shares the same listener by default.
 
 | Method | Path | Behavior |
 | --- | --- | --- |
@@ -122,10 +121,10 @@ All `/v1/*` routes require an enabled `server_keys` value in `Authorization: Bea
 Discover the actual model IDs before making a request:
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
+curl http://127.0.0.1:8081/v1/models \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY'
 
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:8081/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"Hello"}]}'

@@ -45,9 +45,9 @@ Prima di avviare il servizio, modifica `config.json`:
 
 Su Windows, copia `config.example.json` in `config.json` e compila con `go build -o opencode2api.exe ./cmd/opencode2api`. Poi avvia il binario dalla directory corrente specificando `-config config.json`.
 
-La configurazione di esempio usa `127.0.0.1:8080` per l'API e `0.0.0.0:8081` per la WebUI. Apri `http://localhost:8081` in locale. Limita l'accesso alla console di gestione e usa un reverse proxy HTTPS per gli accessi dalla rete.
+La configurazione di esempio serve API e WebUI insieme su `127.0.0.1:8081`. Apri `http://localhost:8081` in locale; i client compatibili OpenAI usano `http://127.0.0.1:8081/v1`. Limita l'accesso alla console di gestione e usa un reverse proxy HTTPS per gli accessi dalla rete.
 
-Per servire entrambi su una sola porta, imposta `webui.listen` allo stesso indirizzo di `listen` (per esempio entrambi `0.0.0.0:8080`): `/v1/*` e `/healthz` restano al gateway, mentre la WebUI con i suoi endpoint di gestione `/api/*` risponde su ogni altro percorso di quella porta. La WebUI si trova allora su `http://localhost:8080`. Condividere la porta espone la console di gestione ovunque l'API sia raggiungibile: usa una password robusta e limita l'accesso di conseguenza.
+La condivisione di una porta vale ogni volta che `webui.listen` è uguale a `listen`: `/v1/*` e `/healthz` restano al gateway, mentre la WebUI con i suoi endpoint di gestione `/api/*` risponde su ogni altro percorso. Per separarli di nuovo, assegna a `webui.listen` un indirizzo diverso (per esempio `0.0.0.0:8082`). Condividere la porta espone la console di gestione ovunque l'API sia raggiungibile: usa una password robusta e limita l'accesso di conseguenza.
 
 Opzioni da riga di comando:
 
@@ -61,7 +61,7 @@ La directory di configurazione deve essere scrivibile per migrare la password, s
 
 ## Docker e Compose
 
-L'immagine pubblicata è `ghcr.io/jasonxu114514/opencode2api`. Prepara `config.json` prima dell'avvio. Per raggiungere le porte pubblicate, mantieni i listener interni API/WebUI su `0.0.0.0:8080` e `0.0.0.0:8081`; limita l'accesso tramite il binding delle porte host e HTTPS dove necessario.
+L'immagine pubblicata è `ghcr.io/jasonxu114514/opencode2api`. Prepara `config.json` prima dell'avvio. Per raggiungere le porte pubblicate, mantieni il listener interno condiviso su `0.0.0.0:8081`; limita l'accesso tramite il binding delle porte host e HTTPS dove necessario.
 
 ```bash
 docker compose up -d
@@ -75,17 +75,16 @@ docker compose cp config.json opencode2api:/var/lib/opencode2api/config.json
 docker compose restart
 ```
 
-Prima della sostituzione salva configurazione e stato attivi. L'entrypoint esegue il servizio senza privilegi e cambia l'esatto listener API dell'esempio `127.0.0.1:8080` in `0.0.0.0:8080` soltanto durante l'inizializzazione. Se non esiste un seed fornito dall'host e viene usato l'esempio integrato, il seed abilita anche `anonymous: true` così il container si avvia senza chiavi; il traffico anonimo può essere bloccato a monte, quindi aggiungi una chiave Zen/Go o collega Go/Zen OAuth nella WebUI e poi disattiva l'accesso anonimo se non desiderato. I seed forniti dall'operatore mantengono la propria impostazione `anonymous`. Compose usa filesystem radice in sola lettura, volume di stato scrivibile e tmpfs `/tmp`. Le porte pubblicate si legano per default a tutte le interfacce host; per uso locale modifica `ports` in `127.0.0.1:8080:8080` e `127.0.0.1:8081:8081`.
+Prima della sostituzione salva configurazione e stato attivi. L'entrypoint esegue il servizio senza privilegi e cambia l'esatto listener API dell'esempio `127.0.0.1:8081` (o il legacy `127.0.0.1:8080`) in `0.0.0.0:8081` soltanto durante l'inizializzazione. Se non esiste un seed fornito dall'host e viene usato l'esempio integrato, il seed abilita anche `anonymous: true` così il container si avvia senza chiavi; il traffico anonimo può essere bloccato a monte, quindi aggiungi una chiave Zen/Go o collega Go/Zen OAuth nella WebUI e poi disattiva l'accesso anonimo se non desiderato. I seed forniti dall'operatore mantengono la propria impostazione `anonymous`. Compose usa filesystem radice in sola lettura, volume di stato scrivibile e tmpfs `/tmp`. La porta pubblicata si lega per default a tutte le interfacce host; per uso locale modifica `ports` in `127.0.0.1:8081:8081`.
 
 | Variabile Compose | Predefinito | Effetto |
 | --- | --- | --- |
 | `OPENCODE2API_VERSION` | `latest` | Tag immagine; fissa un tag di rilascio per una versione precisa. |
-| `OPENCODE2API_PORT` | `8080` | Porta API pubblicata sull'host. |
-| `OPENCODE2API_WEBUI_PORT` | `8081` | Porta di gestione pubblicata sull'host. |
+| `OPENCODE2API_PORT` | `8081` | Porta host pubblicata per il listener condiviso API/WebUI. |
 | `OPENCODE2API_LISTEN` | Non impostata | Override esplicito del listener API interno. |
 | `OPENCODE2API_WEBUI_LISTEN` | Non impostata | Override esplicito del listener di gestione interno. |
 
-Le ultime due diventano `LISTEN_ADDRESS` e `WEBUI_LISTEN_ADDRESS` nel container; se vuote, vale il file attivo. Cambiare porte host non modifica i listener interni. Se cambia la porta API interna, aggiorna mapping e health check dell'immagine, che usa 8080. Un `proxyfile` deve essere montato nel percorso configurato del container.
+Le ultime due diventano `LISTEN_ADDRESS` e `WEBUI_LISTEN_ADDRESS` nel container; se vuote, vale il file attivo. Cambiare la porta host non modifica i listener interni. Se cambia la porta interna, aggiorna mapping e health check dell'immagine, che usa 8081. Un `proxyfile` deve essere montato nel percorso configurato del container.
 
 Per un'immagine locale:
 
@@ -93,7 +92,7 @@ Per un'immagine locale:
 docker build -t opencode2api:local .
 docker volume create opencode2api-state
 docker run -d --name opencode2api \
-  -p 127.0.0.1:8080:8080 -p 127.0.0.1:8081:8081 \
+  -p 127.0.0.1:8081:8081 \
   -e CONFIG_SEED_PATH=/run/config/opencode2api.json \
   -v "$PWD/config.json:/run/config/opencode2api.json:ro" \
   -v opencode2api-state:/var/lib/opencode2api \
@@ -104,7 +103,7 @@ WARP richiede UDP in uscita verso Cloudflare sulla porta `2408`, senza rete host
 
 ## Uso dell'API
 
-Queste sono le rotte di compatibilità esistenti. Per un client compatibile OpenAI usa `http://127.0.0.1:8080/v1` come URL di base; la gestione usa un listener separato.
+Queste sono le rotte di compatibilità esistenti. Per un client compatibile OpenAI usa `http://127.0.0.1:8081/v1` come URL di base; la gestione condivide lo stesso listener per default.
 
 | Metodo | Percorso | Comportamento |
 | --- | --- | --- |
@@ -120,10 +119,10 @@ Tutte le rotte `/v1/*` richiedono una chiave abilitata di `server_keys` in `Auth
 Consulta prima gli ID dei modelli effettivamente disponibili:
 
 ```bash
-curl http://127.0.0.1:8080/v1/models \
+curl http://127.0.0.1:8081/v1/models \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY'
 
-curl http://127.0.0.1:8080/v1/chat/completions \
+curl http://127.0.0.1:8081/v1/chat/completions \
   -H 'Authorization: Bearer YOUR_LOCAL_API_KEY' \
   -H 'Content-Type: application/json' \
   -d '{"model":"MODEL_ID","messages":[{"role":"user","content":"Ciao"}]}'

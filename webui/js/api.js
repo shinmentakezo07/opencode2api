@@ -52,8 +52,8 @@ export async function api(path, options = {}) {
 // Client-facing API base derived from the configured listen address.
 export function derivedAPIBase() {
   const config = store.get("config");
-  const listen = config?.effective?.listen || config?.listen || ":8080";
+  const listen = config?.effective?.listen || config?.listen || ":8081";
   const match = listen.match(/^\[.*\]:(\d+)$/) || listen.match(/:(\d+)$/);
-  const port = match?.[1] || "8080";
+  const port = match?.[1] || "8081";
   return `${location.protocol}//${location.hostname}:${port}`;
 }

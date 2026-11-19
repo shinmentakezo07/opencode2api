@@ -1,5 +1,5 @@
 {
-  "listen": "127.0.0.1:8080",
+  "listen": "127.0.0.1:8081",
   "server_keys": ["change-this-local-key"],
   "zen_keys": [],
   "go_keys": [],
@@ -48,7 +48,7 @@
   },
   "webui": {
     "enabled": true,
-    "listen": "0.0.0.0:8081",
+    "listen": "127.0.0.1:8081",
     // No username/password configured means the default login admin / 3178848.
     // Change it in the WebUI (Account) before exposing the service.
     "username": "admin",

@@ -772,7 +772,7 @@ func rewriteResponsesTextTools(payload map[string]any, renames *ToolRenames) boo
 // until the terminal frame so no content block has to be reopened.
 func TextToolStreamReader(reader io.Reader, protocol Protocol, renames *ToolRenames) io.Reader {
 	return &textToolStreamReader{
-		buffer: bufio.NewReaderSize(reader, 64<<10),
+		buffer: bufio.NewReaderSize(reader, 16<<10),
 		stream: &textToolStream{protocol: protocol, scanner: &textToolScanner{renames: renames}},
 	}
 }
@@ -939,6 +939,9 @@ func (stream *textToolStream) rewriteFrame(raw string) []byte {
 // rewriteChatFrame trims text tool blocks from content deltas and folds the
 // recovered calls into the frame that carries finish_reason.
 func (stream *textToolStream) rewriteChatFrame(raw string) []byte {
+	if !stream.chatNeedsScan(raw) {
+		return []byte(raw)
+	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return []byte(raw)
@@ -1029,6 +1032,9 @@ func (stream *textToolStream) chatToolDeltas() []any {
 // rewriteAnthropicFrame trims text tool blocks from text deltas and emits
 // tool_use blocks just before the message ends.
 func (stream *textToolStream) rewriteAnthropicFrame(raw string) []byte {
+	if !stream.anthropicNeedsScan(raw) {
+		return []byte(raw)
+	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return []byte(raw)
@@ -1173,6 +1179,9 @@ func (stream *textToolStream) anthropicFinish() []byte {
 // rewriteResponsesFrame trims text tool blocks from output_text deltas and
 // emits function_call items before the response completes.
 func (stream *textToolStream) rewriteResponsesFrame(raw string) []byte {
+	if !stream.responsesNeedsScan(raw) {
+		return []byte(raw)
+	}
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(raw), &payload); err != nil {
 		return []byte(raw)
@@ -1417,4 +1426,49 @@ func responsesEvent(name string, payload map[string]any) []byte {
 // sseData renders one SSE data frame.
 func sseData(encoded []byte) []byte {
 	return []byte("data: " + string(encoded) + "\n\n")
+}
+
+// chatNeedsScan reports whether a Chat frame can change the scanner or carry a
+// recovered call. Plain content frames are forwarded without decoding, which
+// keeps the per-token path cheap; a frame is decoded once it holds a possible
+// marker start, a finish reason, or while the scanner still holds a fragment.
+func (stream *textToolStream) chatNeedsScan(raw string) bool {
+	if stream.scanner.pending != "" {
+		return true
+	}
+	if strings.Contains(raw, "finish_reason") {
+		return true
+	}
+	return strings.Contains(raw, "<") || strings.Contains(raw, `\u003c`)
+}
+
+// anthropicNeedsScan reports whether an Anthropic frame can change the scanner
+// or the content-block bookkeeping. A plain text delta is forwarded without
+// decoding unless it holds a possible marker start.
+func (stream *textToolStream) anthropicNeedsScan(raw string) bool {
+	if stream.scanner.pending != "" {
+		return true
+	}
+	if strings.Contains(raw, "text_delta") {
+		return strings.Contains(raw, "<") || strings.Contains(raw, `\u003c`)
+	}
+	return strings.Contains(raw, "content_block_") ||
+		strings.Contains(raw, "message_delta") ||
+		strings.Contains(raw, "message_stop")
+}
+
+// responsesNeedsScan reports whether a Responses frame can change the scanner
+// or the output bookkeeping. A plain output-text delta is forwarded without
+// decoding unless it holds a possible marker start.
+func (stream *textToolStream) responsesNeedsScan(raw string) bool {
+	if stream.scanner.pending != "" {
+		return true
+	}
+	if strings.Contains(raw, "output_text.delta") {
+		return strings.Contains(raw, "<") || strings.Contains(raw, `\u003c`)
+	}
+	return strings.Contains(raw, "response.output_item.") ||
+		strings.Contains(raw, "response.completed") ||
+		strings.Contains(raw, "response.incomplete") ||
+		strings.Contains(raw, "response.done")
 }

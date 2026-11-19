@@ -30,6 +30,13 @@ const maxSSEFrameBytes = 16 << 20
 
 var errSSEFrameTooLarge = errors.New("upstream SSE event exceeds 16 MiB")
 
+// sseEventPrefix and sseDataPrefix are the field names of the two SSE lines
+// the tracker reads, kept as bytes so the per-frame parse does not allocate.
+var (
+	sseEventPrefix = []byte("event:")
+	sseDataPrefix  = []byte("data:")
+)
+
 // streamTermination records how a transcoded stream ended, so the code after
 // readSSE can tell a normal terminal event from an upstream error.
 type streamTermination uint8
@@ -243,7 +250,7 @@ func RenameStreamReader(reader io.Reader, protocol Protocol, renames *ToolRename
 		return reader
 	}
 	return &renameStreamReader{
-		buffer:  bufio.NewReaderSize(reader, 64<<10),
+		buffer:  bufio.NewReaderSize(reader, 16<<10),
 		renamer: &streamToolRenamer{protocol: protocol, renames: renames, tools: map[string]*streamToolRenameState{}},
 	}
 }
@@ -729,30 +736,66 @@ func (observer *streamUsageTracker) ParseError() error { return observer.parseEr
 // consume parses one complete SSE frame and records its terminal events,
 // usage and parse error before Write decides whether the frame can be relayed.
 func (observer *streamUsageTracker) consume(frame []byte) {
-	err := readSSE(bytes.NewReader(frame), func(eventName, data string) error {
-		events, err := observer.parser.Parse(eventName, data)
-		if err != nil {
-			if observer.parseErr == nil {
-				observer.parseErr = err
-			}
-			return nil
+	var (
+		eventName string
+		data      []byte
+	)
+	flush := func() {
+		if len(data) > 0 {
+			observer.consumeEvent(eventName, string(data))
 		}
-		for _, event := range events {
-			switch event.Kind {
-			case "done":
-				observer.normal = true
-			case "error":
-				observer.error = true
-			}
-			if event.Usage != nil {
-				observer.reported = true
-				mergeBridgeUsage(&observer.usage, *event.Usage)
-			}
+		eventName = ""
+		data = data[:0]
+	}
+	// Parse the bounded frame in place. readSSE would allocate a scanner and
+	// its buffer for every frame, which is the hot path of a forwarded stream.
+	for len(frame) > 0 {
+		var line []byte
+		if index := bytes.IndexByte(frame, '\n'); index >= 0 {
+			line, frame = frame[:index], frame[index+1:]
+		} else {
+			line, frame = frame, nil
 		}
-		return nil
-	})
-	if err != nil && observer.parseErr == nil {
-		observer.parseErr = err
+		if len(line) > 0 && line[len(line)-1] == '\r' {
+			line = line[:len(line)-1]
+		}
+		switch {
+		case len(line) == 0:
+			flush()
+		case line[0] == ':':
+			// SSE comment.
+		case bytes.HasPrefix(line, sseEventPrefix):
+			eventName = string(bytes.TrimSpace(line[len(sseEventPrefix):]))
+		case bytes.HasPrefix(line, sseDataPrefix):
+			if len(data) > 0 {
+				data = append(data, '\n')
+			}
+			data = append(data, bytes.TrimSpace(line[len(sseDataPrefix):])...)
+		}
+	}
+	flush()
+}
+
+// consumeEvent folds one SSE event into the usage tracker.
+func (observer *streamUsageTracker) consumeEvent(eventName, data string) {
+	events, err := observer.parser.Parse(eventName, data)
+	if err != nil {
+		if observer.parseErr == nil {
+			observer.parseErr = err
+		}
+		return
+	}
+	for _, event := range events {
+		switch event.Kind {
+		case "done":
+			observer.normal = true
+		case "error":
+			observer.error = true
+		}
+		if event.Usage != nil {
+			observer.reported = true
+			mergeBridgeUsage(&observer.usage, *event.Usage)
+		}
 	}
 }
 
@@ -783,7 +826,7 @@ func nextSSEBoundary(data []byte) (int, int) {
 // errors, and errors returned by handler, end the read.
 func readSSE(reader io.Reader, handler func(eventName, data string) error) error {
 	scanner := bufio.NewScanner(reader)
-	scanner.Buffer(make([]byte, 64<<10), maxSSEFrameBytes)
+	scanner.Buffer(make([]byte, 16<<10), maxSSEFrameBytes)
 	var eventName string
 	var dataLines []string
 	frameBytes := 0

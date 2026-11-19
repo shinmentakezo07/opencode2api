@@ -38,10 +38,70 @@ const (
 	textToolClose     = "</tool_call>"
 	textToolRootClose = "</tool_calls>"
 
+	// Other spellings models use for the same dialect. The parser folds them
+	// onto the canonical tags before parsing.
+	textToolAliasOpen      = "<function_call"
+	textToolAliasRootOpen  = "<function_calls"
+	textToolAliasClose     = "</function_call>"
+	textToolAliasRootClose = "</function_calls>"
+
 	// textToolBufferLimit bounds how much an unfinished block may hold back. A
 	// longer candidate is flushed as plain text instead of stalling the stream.
 	textToolBufferLimit = 1 << 20
 )
+
+// textToolNormalizer folds the alias spellings, including Claude's
+// <function_calls><invoke name="…"> form, onto the canonical tags. Root
+// spellings come first so the longer tag wins at a shared prefix.
+var textToolNormalizer = strings.NewReplacer(
+	textToolAliasRootOpen, textToolRootOpen,
+	textToolAliasRootClose, textToolRootClose,
+	textToolAliasOpen, textToolOpen,
+	textToolAliasClose, textToolClose,
+	"<invoke", textToolOpen,
+	"</invoke>", textToolClose,
+)
+
+// normalizeTextToolTags folds alias tags onto the canonical ones. Only a
+// function_call block is rewritten, so <invoke> in ordinary tool-call text is
+// left alone.
+func normalizeTextToolTags(text string) string {
+	if !strings.Contains(text, "function_call") {
+		return text
+	}
+	return textToolNormalizer.Replace(text)
+}
+
+// indexTextToolOpen returns the earliest canonical or alias opener, or -1.
+func indexTextToolOpen(text string) int {
+	best := -1
+	for _, marker := range []string{textToolOpen, textToolAliasOpen} {
+		if index := strings.Index(text, marker); index >= 0 && (best < 0 || index < best) {
+			best = index
+		}
+	}
+	return best
+}
+
+// textToolCloseTag returns the closing tag that matches the opener at the start
+// of text.
+func textToolCloseTag(text string) string {
+	switch {
+	case strings.HasPrefix(text, textToolRootOpen):
+		return textToolRootClose
+	case strings.HasPrefix(text, textToolAliasRootOpen):
+		return textToolAliasRootClose
+	case strings.HasPrefix(text, textToolAliasOpen):
+		return textToolAliasClose
+	default:
+		return textToolClose
+	}
+}
+
+// containsTextToolOpen reports whether text carries any opener spelling.
+func containsTextToolOpen(text string) bool {
+	return strings.Contains(text, textToolOpen) || strings.Contains(text, textToolAliasOpen)
+}
 
 // textToolCall is one call recovered from assistant text. Arguments is the
 // JSON object the client receives as the call's arguments string.
@@ -68,7 +128,7 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 	var calls []textToolCall
 	for {
 		if !s.holding {
-			index := strings.Index(s.pending, textToolOpen)
+			index := indexTextToolOpen(s.pending)
 			if index < 0 {
 				keep := heldMarkerPrefix(s.pending)
 				if !final {
@@ -99,10 +159,7 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 			}
 			continue
 		}
-		closeTag := textToolClose
-		if strings.HasPrefix(s.pending, textToolRootOpen) {
-			closeTag = textToolRootClose
-		}
+		closeTag := textToolCloseTag(s.pending)
 		end := strings.Index(s.pending, closeTag)
 		if end < 0 {
 			if len(s.pending) > textToolBufferLimit || final {
@@ -129,16 +186,22 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 // heldMarkerPrefix returns the length of a trailing fragment that could still
 // become a block opener, so the scanner does not forward a split marker.
 func heldMarkerPrefix(text string) int {
-	limit := len(textToolRootOpen) - 1
-	if limit > len(text) {
-		limit = len(text)
-	}
-	for length := limit; length > 0; length-- {
-		if strings.HasSuffix(text, textToolRootOpen[:length]) {
-			return length
+	best := 0
+	for _, marker := range []string{textToolRootOpen, textToolAliasRootOpen} {
+		limit := len(marker) - 1
+		if limit > len(text) {
+			limit = len(text)
+		}
+		for length := limit; length > 0; length-- {
+			if strings.HasSuffix(text, marker[:length]) {
+				if length > best {
+					best = length
+				}
+				break
+			}
 		}
 	}
-	return 0
+	return best
 }
 
 // extractTextToolCalls removes every tool-call block from text and returns the
@@ -155,6 +218,7 @@ func extractTextToolCalls(text string, renames *ToolRenames) (string, []textTool
 // or a bare <tool_call>. The inner call is a JSON object or a tag dialect whose
 // child tags are the argument names.
 func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, bool) {
+	block = normalizeTextToolTags(block)
 	inner := block
 	nameAttribute := ""
 	isRoot := strings.HasPrefix(inner, textToolRootOpen)
@@ -208,24 +272,38 @@ func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, boo
 // tagAttribute reads an attribute value from an opening tag such as
 // `<tool_call name="read">`.
 func tagAttribute(tag, name string) string {
-	needle := name + "="
-	index := strings.Index(strings.ToLower(tag), needle)
-	if index < 0 {
-		return ""
-	}
-	value := strings.TrimSpace(tag[index+len(needle):])
-	if value == "" {
-		return ""
-	}
-	quote := value[0]
-	if quote != '"' && quote != '\'' {
-		return ""
-	}
-	value = value[1:]
-	if end := strings.IndexByte(value, quote); end >= 0 {
-		return value[:end]
+	needle := strings.ToLower(name) + "="
+	lower := strings.ToLower(tag)
+	for offset := 0; offset < len(lower); {
+		index := strings.Index(lower[offset:], needle)
+		if index < 0 {
+			return ""
+		}
+		index += offset
+		offset = index + len(needle)
+		// data-name= is a different attribute from name=.
+		if index > 0 && !isTagSeparator(tag[index-1]) {
+			continue
+		}
+		value := strings.TrimSpace(tag[offset:])
+		if value == "" {
+			continue
+		}
+		quote := value[0]
+		if quote != '"' && quote != '\'' {
+			continue
+		}
+		value = value[1:]
+		if end := strings.IndexByte(value, quote); end >= 0 {
+			return value[:end]
+		}
 	}
 	return ""
+}
+
+// isTagSeparator reports whether char can precede an attribute name in a tag.
+func isTagSeparator(char byte) bool {
+	return char == ' ' || char == '\t' || char == '\r' || char == '\n'
 }
 
 // parseOneTextToolCall parses the body of one <tool_call>. A JSON object
@@ -330,6 +408,7 @@ func parseTextJSONCalls(text string, renames *ToolRenames) ([]textToolCall, bool
 // parseSelfClosingTextToolCall parses <tool_call name="…" arguments="…"/>,
 // where the opening tag carries the whole call.
 func parseSelfClosingTextToolCall(tag string, renames *ToolRenames) (textToolCall, bool) {
+	tag = normalizeTextToolTags(tag)
 	if !strings.HasPrefix(tag, textToolOpen) {
 		return textToolCall{}, false
 	}
@@ -400,7 +479,8 @@ func parseTextTagArguments(body string) string {
 			}
 		}
 		body = body[opening+1+close+1:]
-		if key == "" {
+		if key == "" || strings.HasPrefix(key, "/") {
+			// Skip closing tags; only opening tags name a parameter.
 			continue
 		}
 		end := strings.Index(body, "</"+tagName+">")
@@ -534,7 +614,7 @@ func newToolCallID(prefix string) string {
 // visible answer. A body of another shape, or one without a call block, is
 // returned unchanged.
 func RewriteTextToolCalls(body []byte, protocol Protocol, renames *ToolRenames) []byte {
-	if len(body) == 0 || !bytes.Contains(body, []byte("tool_call")) {
+	if len(body) == 0 || (!bytes.Contains(body, []byte("tool_call")) && !bytes.Contains(body, []byte("function_call"))) {
 		return body
 	}
 	var payload map[string]any
@@ -573,7 +653,7 @@ func rewriteChatTextTools(payload map[string]any, renames *ToolRenames) bool {
 		return false
 	}
 	text, ok := message["content"].(string)
-	if !ok || !strings.Contains(text, textToolOpen) {
+	if !ok || !containsTextToolOpen(text) {
 		return false
 	}
 	clean, calls := extractTextToolCalls(text, renames)
@@ -611,7 +691,7 @@ func rewriteAnthropicTextTools(payload map[string]any, renames *ToolRenames) boo
 			continue
 		}
 		text, ok := block["text"].(string)
-		if !ok || !strings.Contains(text, textToolOpen) {
+		if !ok || !containsTextToolOpen(text) {
 			continue
 		}
 		clean, calls := extractTextToolCalls(text, renames)
@@ -659,7 +739,7 @@ func rewriteResponsesTextTools(payload map[string]any, renames *ToolRenames) boo
 				continue
 			}
 			text, ok := part["text"].(string)
-			if !ok || !strings.Contains(text, textToolOpen) {
+			if !ok || !containsTextToolOpen(text) {
 				continue
 			}
 			clean, calls := extractTextToolCalls(text, renames)

@@ -45,6 +45,34 @@ type Availability struct {
 	EffortCheckedAt time.Time   `json:"effort_checked_at,omitempty"`
 }
 
+// AvailabilityStatus is the derived control state of one free model. It is
+// computed from the record's flags rather than stored, so it cannot drift from
+// them; the JSON field of the same name is filled by the admin snapshot.
+type AvailabilityStatus string
+
+const (
+	AvailabilityUnknown   AvailabilityStatus = "unknown"
+	AvailabilityAvailable AvailabilityStatus = "available"
+	AvailabilityManual    AvailabilityStatus = "manual"
+	AvailabilityDisabled  AvailabilityStatus = "disabled"
+)
+
+// Status derives the model's control state: a disabled model reports
+// "disabled", an operator-held one "manual", a never-probed one "unknown" and
+// everything else "available".
+func (a Availability) Status() AvailabilityStatus {
+	switch {
+	case a.Disabled:
+		return AvailabilityDisabled
+	case a.Manual:
+		return AvailabilityManual
+	case a.CheckedAt.IsZero():
+		return AvailabilityUnknown
+	default:
+		return AvailabilityAvailable
+	}
+}
+
 // AvailabilityRegistry tracks which free models the background probes found
 // available and which ones an operator put under manual control. It is
 // persisted as JSON at path, or kept in memory only when path is empty.

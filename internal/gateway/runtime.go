@@ -516,31 +516,73 @@ type WarpStatus struct {
 	Egress  []string `json:"egress,omitempty"`
 }
 
+// KeyState is the derived health of one upstream key at snapshot time.
+type KeyState string
+
+const (
+	KeyStateReady   KeyState = "ready"
+	KeyStateCooling KeyState = "cooling"
+)
+
 // KeyStatus describes one upstream key by its display ID (its last five
 // characters): its tier, its current proxy binding, its consecutive failures
-// and any active cooldown.
+// and any active cooldown. State is derived from CooldownUntil.
 type KeyStatus struct {
 	ID            string     `json:"id"`
 	Tier          string     `json:"tier"`
 	Index         int        `json:"index"`
 	ProxyIndex    int        `json:"proxy_index"`
 	Bound         bool       `json:"bound,omitempty"`
+	State         KeyState   `json:"state"`
 	Failures      uint32     `json:"failures"`
 	CooldownUntil *time.Time `json:"cooldown_until,omitempty"`
 }
 
+// ProxyState is the derived health of one proxy route at snapshot time.
+// "blocked" means the free tier flagged its egress IP; that is independent of
+// "healthy" and is the reason the anonymous cursor skips the exit.
+type ProxyState string
+
+const (
+	ProxyStateHealthy   ProxyState = "healthy"
+	ProxyStateUnhealthy ProxyState = "unhealthy"
+	ProxyStateChecking  ProxyState = "checking"
+	ProxyStateBlocked   ProxyState = "blocked"
+)
+
 // ProxyStatus describes one proxy route: its redacted address, its health,
 // whether a health check is in flight, and how many Zen and Go keys are bound
 // to it. Anonymous reports whether the anonymous lane, which uses every
-// proxy, is enabled.
+// proxy, is enabled. State is derived from the booleans above.
 type ProxyStatus struct {
-	Index     int    `json:"index"`
-	Address   string `json:"address"`
-	Healthy   bool   `json:"healthy"`
-	Checking  bool   `json:"checking"`
-	ZenKeys   int    `json:"zen_keys"`
-	GoKeys    int    `json:"go_keys"`
-	Anonymous bool   `json:"anonymous"`
+	Index        int        `json:"index"`
+	Address      string     `json:"address"`
+	State        ProxyState `json:"state"`
+	Healthy      bool       `json:"healthy"`
+	Checking     bool       `json:"checking"`
+	BlockedUntil *time.Time `json:"blocked_until,omitempty"`
+	ZenKeys      int        `json:"zen_keys"`
+	GoKeys       int        `json:"go_keys"`
+	Anonymous    bool       `json:"anonymous"`
+}
+
+// proxyState derives a proxy's state, preferring the free-tier IP block over
+// the health booleans: a blocked exit is skipped by the anonymous cursor even
+// while it answers other traffic.
+func proxyState(proxy *proxyTransport, now time.Time) ProxyState {
+	if proxy == nil {
+		return ProxyStateUnhealthy
+	}
+	switch {
+	case proxy.blocked(now):
+		return ProxyStateBlocked
+	case proxy.checking.Load():
+		return ProxyStateChecking
+	case proxy.healthy.Load():
+		return ProxyStateHealthy
+	default:
+		return ProxyStateUnhealthy
+	}
 }
 
 // Resources reports the current runtime's servable models, per-key state and
@@ -557,7 +599,7 @@ func (m *RuntimeController) Resources() ResourceSnapshot {
 	result.Metadata = gateway.catalog.MetadataSnapshot()
 	result.Keys = append(result.Keys, keyStatuses("zen", gateway.zenNodes)...)
 	if connection := gateway.cfg.GoOAuth; connection != nil {
-		status := KeyStatus{ID: oauthAccountID(connection), Tier: string(config.TierGo), ProxyIndex: -1, Bound: connection.Proxy != ""}
+		status := KeyStatus{ID: oauthAccountID(connection), Tier: string(config.TierGo), ProxyIndex: -1, Bound: connection.Proxy != "", State: KeyStateReady}
 		for _, proxy := range gateway.transports.items {
 			if connection.Proxy != "" && proxy.name == connection.Proxy {
 				status.ProxyIndex = proxy.index
@@ -569,7 +611,7 @@ func (m *RuntimeController) Resources() ResourceSnapshot {
 		result.Keys = append(result.Keys, keyStatuses("go", gateway.goNodes)...)
 	}
 	if connection := gateway.cfg.ZenOAuth; connection != nil {
-		status := KeyStatus{ID: oauthAccountID(connection), Tier: string(config.TierZen), ProxyIndex: -1, Bound: connection.Proxy != ""}
+		status := KeyStatus{ID: oauthAccountID(connection), Tier: string(config.TierZen), ProxyIndex: -1, Bound: connection.Proxy != "", State: KeyStateReady}
 		for _, proxy := range gateway.transports.items {
 			if connection.Proxy != "" && proxy.name == connection.Proxy {
 				status.ProxyIndex = proxy.index
@@ -584,8 +626,13 @@ func (m *RuntimeController) Resources() ResourceSnapshot {
 	gateway.goNodes.bindingsMu.Lock()
 	goBindings := append([]int(nil), gateway.goNodes.bindingCount...)
 	gateway.goNodes.bindingsMu.Unlock()
+	now := time.Now()
 	for _, proxy := range gateway.transports.items {
-		status := ProxyStatus{Index: proxy.index, Address: config.RedactURL(proxy.name), Healthy: proxy.healthy.Load(), Checking: proxy.checking.Load(), Anonymous: gateway.cfg.Anonymous}
+		status := ProxyStatus{Index: proxy.index, Address: config.RedactURL(proxy.name), State: proxyState(proxy, now), Healthy: proxy.healthy.Load(), Checking: proxy.checking.Load(), Anonymous: gateway.cfg.Anonymous}
+		if until := proxy.blockedUntil.Load(); until > now.UnixNano() {
+			value := time.Unix(0, until).UTC()
+			status.BlockedUntil = &value
+		}
 		if proxy.index < len(zenBindings) {
 			status.ZenKeys = zenBindings[proxy.index]
 		}
@@ -735,10 +782,12 @@ func (m *RuntimeController) DebugRouteForTier(model string, tier config.Tier) (m
 }
 
 func keyStatuses(tier string, pool *upstreamNodes) []KeyStatus {
+	now := time.Now()
 	result := make([]KeyStatus, 0, len(pool.nodes))
 	for _, node := range pool.nodes {
-		status := KeyStatus{ID: config.KeyDisplayID(node.key), Tier: tier, Index: node.index, ProxyIndex: int(node.proxyIndex.Load()), Bound: node.bound, Failures: node.failures.Load()}
-		if until := node.cooldownUntil.Load(); until > time.Now().UnixNano() {
+		status := KeyStatus{ID: config.KeyDisplayID(node.key), Tier: tier, Index: node.index, ProxyIndex: int(node.proxyIndex.Load()), Bound: node.bound, State: KeyStateReady, Failures: node.failures.Load()}
+		if until := node.cooldownUntil.Load(); until > now.UnixNano() {
+			status.State = KeyStateCooling
 			value := time.Unix(0, until).UTC()
 			status.CooldownUntil = &value
 		}

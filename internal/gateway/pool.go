@@ -84,6 +84,55 @@ type anonymousNodes struct {
 	probing        atomic.Bool
 }
 
+// breakerState is the anonymous lane circuit breaker's state at one instant.
+// It is derived from breakerUntil and probing rather than stored, so it cannot
+// drift from the transitions in AllowAttempt, NoteSuccess, NoteFailure and
+// trip. "half-open" means the window has expired and the next AllowAttempt
+// wins the single probe.
+type breakerState string
+
+const (
+	breakerClosed   breakerState = "closed"
+	breakerOpen     breakerState = "open"
+	breakerHalfOpen breakerState = "half-open"
+)
+
+// breakerSnapshot is a point-in-time view of the anonymous lane breaker. It is
+// derived on read; see breakerState.
+type breakerSnapshot struct {
+	State               breakerState
+	PauseUntil          time.Time
+	Strikes             int32
+	ConsecutiveFailures int32
+}
+
+// Snapshot derives the breaker's state at now. A nil pool or a disabled
+// breaker reports closed.
+func (p *anonymousNodes) Snapshot(now time.Time) breakerSnapshot {
+	if p == nil {
+		return breakerSnapshot{State: breakerClosed}
+	}
+	snapshot := breakerSnapshot{
+		State:               breakerClosed,
+		Strikes:             p.breakerStrikes.Load(),
+		ConsecutiveFailures: p.consecutive.Load(),
+	}
+	if p.backoff.threshold < 1 {
+		return snapshot
+	}
+	until := p.breakerUntil.Load()
+	if until == 0 {
+		return snapshot
+	}
+	if now.UnixNano() < until {
+		snapshot.State = breakerOpen
+		snapshot.PauseUntil = time.Unix(0, until).UTC()
+		return snapshot
+	}
+	snapshot.State = breakerHalfOpen
+	return snapshot
+}
+
 type anonymousBackoff struct {
 	threshold int32
 	base      time.Duration

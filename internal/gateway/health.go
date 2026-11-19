@@ -20,8 +20,11 @@ type healthResponse struct {
 	Models  healthModels  `json:"models"`
 	Keys    healthKeys    `json:"keys"`
 	Proxies healthProxies `json:"proxies"`
-	Warp    *healthWarp   `json:"warp,omitempty"`
-	Issues  []string      `json:"issues,omitempty"`
+	// AnonymousLane is always present so consumers get a stable shape even
+	// while the anonymous tier is disabled.
+	AnonymousLane healthAnonymousLane `json:"anonymous_lane"`
+	Warp          *healthWarp         `json:"warp,omitempty"`
+	Issues        []string            `json:"issues,omitempty"`
 }
 
 type healthModels struct {
@@ -47,6 +50,18 @@ type healthProxies struct {
 	Total     int `json:"total"`
 	Healthy   int `json:"healthy"`
 	Unhealthy int `json:"unhealthy"`
+	Blocked   int `json:"blocked"`
+}
+
+// healthAnonymousLane reports the free tier's circuit breaker so an operator
+// can tell a paused lane from a credential or model problem. State is the
+// derived "closed", "open" or "half-open"; PauseUntil is set only while open.
+type healthAnonymousLane struct {
+	Enabled             bool       `json:"enabled"`
+	State               string     `json:"state"`
+	PauseUntil          *time.Time `json:"pause_until,omitempty"`
+	Strikes             int32      `json:"strikes"`
+	ConsecutiveFailures int32      `json:"consecutive_failures"`
 }
 
 // healthWarp reports the state of the userspace WARP pool. It is omitted when
@@ -68,8 +83,17 @@ type healthWarp struct {
 // credentials, marks the status degraded, except that a pending catalog reports
 // starting.
 func (g *Gateway) handleHealth(w http.ResponseWriter, _ *http.Request) {
+	now := time.Now()
 	_, models := g.availableModels()
 	proxyTotal, proxyHealthy := g.transports.healthCounts()
+	proxyBlocked := 0
+	if g.transports != nil {
+		for _, proxy := range g.transports.items {
+			if proxy.blocked(now) {
+				proxyBlocked++
+			}
+		}
+	}
 	zenKeys, goKeys := g.zenNodes.Len(), g.goNodes.Len()
 	if g.cfg.ZenOAuth != nil {
 		zenKeys = 1
@@ -134,6 +158,18 @@ func (g *Gateway) handleHealth(w http.ResponseWriter, _ *http.Request) {
 		issues = append(issues, "no_healthy_proxies")
 	}
 
+	lane := healthAnonymousLane{Enabled: g.cfg.Anonymous, State: string(breakerClosed)}
+	breaker := g.anonymous.Snapshot(now)
+	lane.State = string(breaker.State)
+	lane.Strikes = breaker.Strikes
+	lane.ConsecutiveFailures = breaker.ConsecutiveFailures
+	if !breaker.PauseUntil.IsZero() {
+		pause := breaker.PauseUntil
+		lane.PauseUntil = &pause
+	}
+	if g.cfg.Anonymous && breaker.State == breakerOpen {
+		issues = append(issues, "anonymous_lane_paused")
+	}
 	status := "ok"
 	if len(issues) > 0 {
 		status = "degraded"
@@ -167,9 +203,11 @@ func (g *Gateway) handleHealth(w http.ResponseWriter, _ *http.Request) {
 			Total:     proxyTotal,
 			Healthy:   proxyHealthy,
 			Unhealthy: proxyTotal - proxyHealthy,
+			Blocked:   proxyBlocked,
 		},
-		Warp:   warpStatus,
-		Issues: issues,
+		AnonymousLane: lane,
+		Warp:          warpStatus,
+		Issues:        issues,
 	})
 }
 

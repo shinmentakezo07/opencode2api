@@ -237,6 +237,8 @@ Availability is learned from real traffic by default. Synthetic checks run only 
 
 The WebUI has overview, diagnostics/Playground/logs, client access, API keys, models/quota, rotation, configuration, and account pages. It supports Simplified Chinese, English, Vietnamese, and Italian; language/theme choices are stored in the browser. See the [management guide](docs/management.md) for endpoint details.
 
+The runtime's lifecycle states (lane breaker, key/proxy health, free-model availability, config swap, stream termination) are catalogued in [state machines](docs/state-machines.md), including where each is exposed in the health and management JSON.
+
 Management authentication uses an administrator session cookie, CSRF tokens for writes, and login throttling. Changing the administrator credentials invalidates sessions. Local API keys do not grant management access. `GET /api/config` masks secrets; password-confirmed reveal can expose manual keys/proxy values, but never OAuth tokens.
 
 Use **Models & Quota** to start a Device OAuth login. Open the displayed official verification URL yourself, enter `user_code`, authorize the request you initiated, and select an organization/workspace if asked. The backend polls and refreshes credentials; there is no token-paste, local credential-file import, or callback-URL workflow.

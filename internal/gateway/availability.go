@@ -8,17 +8,26 @@ import (
 	"opencode2api/internal/models"
 )
 
+// AvailabilityView is one availability record plus its derived status, so the
+// WebUI and agents read one state name instead of re-deriving it from the
+// flags. The embedded record keeps the existing JSON shape.
+type AvailabilityView struct {
+	models.Availability
+	Status models.AvailabilityStatus `json:"status"`
+}
+
 // AvailabilitySnapshot returns the availability state of every free model in
 // the current runtime's catalog.
-func (m *RuntimeController) AvailabilitySnapshot() []models.Availability {
-	items := []models.Availability{}
+func (m *RuntimeController) AvailabilitySnapshot() []AvailabilityView {
+	items := []AvailabilityView{}
 	r := m.current.Load()
 	if r == nil {
 		return items
 	}
 	for _, model := range r.gateway.catalog.List() {
 		if r.gateway.catalog.IsFreeModel(model) {
-			items = append(items, r.availability.Get(model))
+			record := r.availability.Get(model)
+			items = append(items, AvailabilityView{Availability: record, Status: record.Status()})
 		}
 	}
 	return items
@@ -131,7 +140,8 @@ func (m *RuntimeController) checkFreeModels(ctx context.Context) {
 			}
 			warpCooling = snapshot.Cooling
 		}
-		item = r.availability.Get(item.Model)
+		item = AvailabilityView{Availability: r.availability.Get(item.Model)}
+		item.Status = item.Availability.Status()
 		if item.Manual {
 			continue
 		}

@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-Trước khi chạy, chỉnh cấu hình trên máy: thay `server_keys`, đặt `webui.password`, rồi điền `zen_keys` hoặc `go_keys`. Khi chỉ quản trị cục bộ, nên dùng `webui.listen: "127.0.0.1:8081"`; giá trị mẫu `0.0.0.0:8081` lắng nghe trên mọi giao diện. Mật khẩu phải có ít nhất 6 ký tự. Khi chưa đặt `webui.username`/`webui.password`, WebUI dùng tài khoản mặc định **admin / 3178848**; hãy đổi trong trang Tài khoản trước khi mở dịch vụ ra ngoài.
+Trước khi chạy, chỉnh cấu hình trên máy: thay `server_keys`, đặt `webui.password`, rồi điền `zen_keys` hoặc `go_keys`. Khi chưa cấu hình `server_keys`, gateway dùng key cục bộ mặc định **3178848**. Khi chỉ quản trị cục bộ, nên dùng `webui.listen: "127.0.0.1:8081"`; giá trị mẫu `0.0.0.0:8081` lắng nghe trên mọi giao diện. Mật khẩu phải có ít nhất 6 ký tự. Khi chưa đặt `webui.username`/`webui.password`, WebUI dùng tài khoản mặc định **admin / 3178848**; hãy đổi trong trang Tài khoản trước khi mở dịch vụ ra ngoài.
 
 ```bash
 ./opencode2api -config config.json

@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-启动前在本机编辑配置：替换 `server_keys`，设置 `webui.password`，填入 `zen_keys` 或 `go_keys`。本地管理建议 `webui.listen: "127.0.0.1:8081"`；示例的 `0.0.0.0:8081` 会监听所有接口。密码至少 6 字符。未设置 `webui.username`/`webui.password` 时，WebUI 使用默认账号 **admin / 3178848**；对外暴露服务前请在账号安全页修改。
+启动前在本机编辑配置：替换 `server_keys`，设置 `webui.password`，填入 `zen_keys` 或 `go_keys`。未配置 `server_keys` 时网关默认使用本地 Key **3178848**。本地管理建议 `webui.listen: "127.0.0.1:8081"`；示例的 `0.0.0.0:8081` 会监听所有接口。密码至少 6 字符。未设置 `webui.username`/`webui.password` 时，WebUI 使用默认账号 **admin / 3178848**；对外暴露服务前请在账号安全页修改。
 
 ```bash
 ./opencode2api -config config.json

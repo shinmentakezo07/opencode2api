@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-Before starting, edit the configuration locally: replace `server_keys`, set `webui.password`, and supply `zen_keys` or `go_keys`. For local management, use `webui.listen: "127.0.0.1:8081"`; the example's `0.0.0.0:8081` listens on all interfaces. The password must contain at least 6 characters. When `webui.username`/`webui.password` are unset, the WebUI uses the default login **admin / 3178848**; change it in the Account page before exposing the service.
+Before starting, edit the configuration locally: replace `server_keys`, set `webui.password`, and supply `zen_keys` or `go_keys`. With no `server_keys` configured the gateway falls back to the default local key **3178848**. For local management, use `webui.listen: "127.0.0.1:8081"`; the example's `0.0.0.0:8081` listens on all interfaces. The password must contain at least 6 characters. When `webui.username`/`webui.password` are unset, the WebUI uses the default login **admin / 3178848**; change it in the Account page before exposing the service.
 
 ```bash
 ./opencode2api -config config.json

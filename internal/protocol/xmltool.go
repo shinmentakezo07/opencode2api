@@ -86,6 +86,19 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 			}
 			s.holding = true
 		}
+		// A self-closing <tool_call name="…" arguments="…"/> carries the whole
+		// call in its opening tag and has no body or closing tag.
+		if opening := strings.IndexByte(s.pending, '>'); opening > 0 && s.pending[opening-1] == '/' {
+			block := s.pending[:opening+1]
+			s.pending = s.pending[opening+1:]
+			s.holding = false
+			if call, ok := parseSelfClosingTextToolCall(block, s.renames); ok {
+				calls = append(calls, call)
+			} else {
+				out.WriteString(block)
+			}
+			continue
+		}
 		closeTag := textToolClose
 		if strings.HasPrefix(s.pending, textToolRootOpen) {
 			closeTag = textToolRootClose
@@ -144,7 +157,8 @@ func extractTextToolCalls(text string, renames *ToolRenames) (string, []textTool
 func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, bool) {
 	inner := block
 	nameAttribute := ""
-	if strings.HasPrefix(inner, textToolRootOpen) {
+	isRoot := strings.HasPrefix(inner, textToolRootOpen)
+	if isRoot {
 		opening := strings.Index(inner, ">")
 		if opening < 0 {
 			return nil, false
@@ -176,6 +190,13 @@ func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, boo
 		call, ok := parseOneTextToolCall(chunk, nameAttribute, renames)
 		if ok {
 			calls = append(calls, call)
+		}
+	}
+	if len(calls) == 0 && isRoot {
+		// Some models put the JSON call (or an array of them) straight in the
+		// <tool_calls> wrapper without a <tool_call> element.
+		if parsed, ok := parseTextJSONCalls(inner, renames); ok {
+			calls = parsed
 		}
 	}
 	if len(calls) == 0 {
@@ -215,27 +236,7 @@ func parseOneTextToolCall(chunk, nameAttribute string, renames *ToolRenames) (te
 	if strings.HasPrefix(body, "{") {
 		var payload map[string]any
 		if err := json.Unmarshal([]byte(body), &payload); err == nil {
-			name := firstTextAny(payload, "name", "tool", "tool_name", "function")
-			if name == "" {
-				// <tool_call name="bash">{...}</tool_call> names the tool on
-				// the tag, not in the JSON object.
-				name = nameAttribute
-			}
-			if name == "" {
-				return textToolCall{}, false
-			}
-			arguments := "{}"
-			if raw, ok := firstTextValue(payload, "arguments", "parameters", "params", "input", "args"); ok {
-				arguments = textArguments(raw)
-			} else if nameAttribute != "" {
-				// The object itself is the argument map.
-				arguments = textArguments(payload)
-			}
-			name = resolveTextToolName(name, renames)
-			if name == "" {
-				return textToolCall{}, false
-			}
-			return textToolCall{Name: name, Arguments: arguments}, true
+			return parseTextJSONCall(payload, nameAttribute, renames)
 		}
 	}
 	name := nameAttribute
@@ -268,6 +269,108 @@ func parseOneTextToolCall(chunk, nameAttribute string, renames *ToolRenames) (te
 	return textToolCall{Name: name, Arguments: arguments}, true
 }
 
+// parseTextJSONCall turns one decoded JSON object into a call. The tool name
+// comes from the object, or from the tag when <tool_call name="…">{…}</tool_call>
+// carries it there; in that form the object itself is the argument map.
+func parseTextJSONCall(payload map[string]any, nameAttribute string, renames *ToolRenames) (textToolCall, bool) {
+	name := firstTextAny(payload, "name", "tool", "tool_name", "function")
+	if name == "" {
+		name = nameAttribute
+	}
+	if name == "" {
+		return textToolCall{}, false
+	}
+	arguments := "{}"
+	if raw, ok := firstTextValue(payload, "arguments", "parameters", "params", "input", "args"); ok {
+		arguments = textArguments(raw)
+	} else if nameAttribute != "" {
+		arguments = textArguments(payload)
+	}
+	name = resolveTextToolName(name, renames)
+	if name == "" {
+		return textToolCall{}, false
+	}
+	return textToolCall{Name: name, Arguments: arguments}, true
+}
+
+// parseTextJSONCalls reads the body of a <tool_calls> wrapper that holds one
+// JSON call or an array of them, without any <tool_call> element.
+func parseTextJSONCalls(text string, renames *ToolRenames) ([]textToolCall, bool) {
+	body := strings.TrimSpace(text)
+	if body == "" {
+		return nil, false
+	}
+	if strings.HasPrefix(body, "[") {
+		var list []map[string]any
+		if err := json.Unmarshal([]byte(body), &list); err != nil {
+			return nil, false
+		}
+		var calls []textToolCall
+		for _, payload := range list {
+			if call, ok := parseTextJSONCall(payload, "", renames); ok {
+				calls = append(calls, call)
+			}
+		}
+		if len(calls) == 0 {
+			return nil, false
+		}
+		return calls, true
+	}
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, false
+	}
+	call, ok := parseTextJSONCall(payload, "", renames)
+	if !ok {
+		return nil, false
+	}
+	return []textToolCall{call}, true
+}
+
+// parseSelfClosingTextToolCall parses <tool_call name="…" arguments="…"/>,
+// where the opening tag carries the whole call.
+func parseSelfClosingTextToolCall(tag string, renames *ToolRenames) (textToolCall, bool) {
+	if !strings.HasPrefix(tag, textToolOpen) {
+		return textToolCall{}, false
+	}
+	attributes := strings.TrimSuffix(strings.TrimPrefix(tag, textToolOpen), "/>")
+	name := tagAttribute(attributes, "name")
+	if name == "" {
+		return textToolCall{}, false
+	}
+	arguments := "{}"
+	for _, key := range []string{"arguments", "args", "parameters", "params", "input"} {
+		if raw := tagAttribute(attributes, key); raw != "" {
+			arguments = textAttributeArguments(raw)
+			break
+		}
+	}
+	name = resolveTextToolName(name, renames)
+	if name == "" {
+		return textToolCall{}, false
+	}
+	return textToolCall{Name: name, Arguments: arguments}, true
+}
+
+// textAttributeArguments renders an attribute value as the arguments string a
+// native call carries. JSON is kept; a bare value has no parameter name to
+// attach to, so it is carried as "input".
+func textAttributeArguments(raw string) string {
+	value := strings.TrimSpace(raw)
+	if value == "" {
+		return "{}"
+	}
+	var decoded any
+	if json.Unmarshal([]byte(value), &decoded) == nil {
+		return textArguments(decoded)
+	}
+	encoded, err := json.Marshal(map[string]any{"input": value})
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
 // parseTextTagArguments collects the child tags of a tag-dialect call into a
 // JSON object. A call without child tags has empty arguments.
 func parseTextTagArguments(body string) string {
@@ -281,16 +384,26 @@ func parseTextTagArguments(body string) string {
 		if close < 0 {
 			break
 		}
-		key := strings.TrimSpace(body[opening+1 : opening+1+close])
+		rawTag := body[opening+1 : opening+1+close]
+		key := strings.TrimSpace(rawTag)
 		if cut := strings.IndexAny(key, " \t\r\n"); cut >= 0 {
 			key = key[:cut]
 		}
 		key = strings.TrimSuffix(key, "/")
+		tagName := key
+		if strings.EqualFold(key, "parameter") {
+			// <parameter name="command">ls</parameter> is a common spelling;
+			// the parameter name becomes the key but the closing tag stays
+			// </parameter>.
+			if name := tagAttribute(rawTag, "name"); name != "" {
+				key = name
+			}
+		}
 		body = body[opening+1+close+1:]
 		if key == "" {
 			continue
 		}
-		end := strings.Index(body, "</"+key+">")
+		end := strings.Index(body, "</"+tagName+">")
 		if end < 0 {
 			// An unclosed parameter keeps the rest as its value rather than
 			// losing it.
@@ -299,7 +412,7 @@ func parseTextTagArguments(body string) string {
 			break
 		}
 		arguments[key] = parseTextValue(body[:end])
-		body = body[end+len(key)+3:]
+		body = body[end+len(tagName)+3:]
 	}
 	if len(arguments) == 0 {
 		return "{}"
@@ -328,7 +441,25 @@ func parseTextValue(raw string) any {
 			return decoded
 		}
 	}
-	return value
+	return decodeTextEntities(value)
+}
+
+// textEntityReplacer decodes the five predefined XML entities a model may use
+// inside a tag-dialect value.
+var textEntityReplacer = strings.NewReplacer(
+	"&lt;", "<",
+	"&gt;", ">",
+	"&quot;", `"`,
+	"&apos;", "'",
+	"&amp;", "&",
+)
+
+// decodeTextEntities decodes XML entities in a raw text value.
+func decodeTextEntities(text string) string {
+	if !strings.Contains(text, "&") {
+		return text
+	}
+	return textEntityReplacer.Replace(text)
 }
 
 // textArguments renders a JSON-form call's arguments as the string a native
@@ -674,6 +805,11 @@ func (stream *textToolStream) rewriteLine(line string) []byte {
 		return nil
 	}
 	if !strings.HasPrefix(body, "data:") {
+		if strings.TrimSpace(body) == "" {
+			// A blank line ends the event; an event name that never carried
+			// data must not prefix the next event.
+			stream.held = ""
+		}
 		return []byte(line)
 	}
 	raw := strings.TrimSpace(strings.TrimPrefix(body, "data:"))
@@ -741,7 +877,11 @@ func (stream *textToolStream) rewriteChatFrame(raw string) []byte {
 				if text, ok := message["content"].(string); ok && text != "" {
 					clean, calls := stream.scanner.push(text, false)
 					if clean != text {
-						message["content"] = clean
+						if clean == "" {
+							delete(message, "content")
+						} else {
+							message["content"] = clean
+						}
 						changed = true
 					}
 					if len(calls) > 0 {

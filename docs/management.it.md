@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-Prima dell'avvio modifica la configurazione localmente: sostituisci `server_keys` e `webui.password`, poi imposta `zen_keys` o `go_keys`. Per la gestione locale è consigliato `webui.listen: "127.0.0.1:8081"`; il valore di esempio `0.0.0.0:8081` ascolta su tutte le interfacce. La password deve avere almeno 10 caratteri; il nome amministratore di esempio è `admin`.
+Prima dell'avvio modifica la configurazione localmente: sostituisci `server_keys`, imposta `webui.password`, poi inserisci `zen_keys` o `go_keys`. Per la gestione locale è consigliato `webui.listen: "127.0.0.1:8081"`; il valore di esempio `0.0.0.0:8081` ascolta su tutte le interfacce. La password deve avere almeno 6 caratteri. Se `webui.username`/`webui.password` non sono impostati, la WebUI usa il login predefinito **admin / 3178848**; cambialo nella pagina Account prima di esporre il servizio.
 
 ```bash
 ./opencode2api -config config.json
@@ -73,7 +73,7 @@ Valori predefiniti comuni per la gestione:
 | Impostazione | Valore predefinito / intervallo |
 | --- | --- |
 | `webui.enabled` | Disabilitata nei valori incorporati; abilitata nell'esempio. |
-| `webui.listen` | `0.0.0.0:8081`. |
+| `webui.listen` | `0.0.0.0:8081`. Impostandolo allo stesso indirizzo di `listen`, API e WebUI condividono una porta: `/v1/*` e `/healthz` vanno al gateway, tutto il resto alla console di gestione. |
 | `logging.level` | `info`; supporta `debug`, `info`, `warn`, `error`. |
 | `logging.ring_size` | `2000`; intervallo 100–50.000. |
 | `logging.dump_request_bodies` | `false`; richiede anche debug, con un massimo di 64 KiB per corpo preparato. |

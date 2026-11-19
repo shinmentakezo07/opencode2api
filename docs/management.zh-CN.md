@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-启动前在本机编辑配置：替换 `server_keys` 和 `webui.password`，填入 `zen_keys` 或 `go_keys`。本地管理建议 `webui.listen: "127.0.0.1:8081"`；示例的 `0.0.0.0:8081` 会监听所有接口。密码至少 10 字符，示例管理员名为 `admin`。
+启动前在本机编辑配置：替换 `server_keys`，设置 `webui.password`，填入 `zen_keys` 或 `go_keys`。本地管理建议 `webui.listen: "127.0.0.1:8081"`；示例的 `0.0.0.0:8081` 会监听所有接口。密码至少 6 字符。未设置 `webui.username`/`webui.password` 时，WebUI 使用默认账号 **admin / 3178848**；对外暴露服务前请在账号安全页修改。
 
 ```bash
 ./opencode2api -config config.json
@@ -73,7 +73,7 @@ Key、代理、上游、超时、模型、偏好、reasoning 和日志设置热�
 | 配置 | 默认 / 范围 |
 | --- | --- |
 | `webui.enabled` | 内置默认关闭，示例开启。 |
-| `webui.listen` | `0.0.0.0:8081`。 |
+| `webui.listen` | `0.0.0.0:8081`。设为与 `listen` 相同的地址时，API 与 WebUI 共用一个端口：`/v1/*` 与 `/healthz` 走网关，其余路径走管理控制台。 |
 | `logging.level` | `info`；支持 `debug`、`info`、`warn`、`error`。 |
 | `logging.ring_size` | `2000`；范围 100–50,000。 |
 | `logging.dump_request_bodies` | `false`；还需 debug 才输出，每个准备好的请求体最多 64 KiB。 |

@@ -37,7 +37,7 @@ Prima di avviare il servizio, modifica `config.json`:
 
 1. Sostituisci `server_keys` con una tua API key locale.
 2. Prima dell'avvio, inserisci una Zen API Key (consigliata) in `zen_keys` oppure una chiave Go in `go_keys`. L'esempio disabilita l'accesso anonimo (`anonymous: false`) e lascia vuoti entrambi gli array; anche una connessione Go OAuth (`go_oauth`) o Zen OAuth (`zen_oauth`) già salvata soddisfa il requisito. Non è supportato avviare senza credenziali soltanto per effettuare il primo login OAuth nella WebUI. Il canale anonimo potrebbe essere fortemente bloccato a monte: preferisci una Zen API Key.
-3. Sostituisci `webui.password`. La configurazione di esempio abilita la WebUI con l'utente `admin`.
+3. Imposta `webui.password` (almeno 6 caratteri). Senza una password configurata la WebUI usa il login predefinito **admin / 3178848**: cambialo nella WebUI (Account) prima di esporre il servizio.
 
 ```bash
 ./opencode2api -config config.json
@@ -46,6 +46,8 @@ Prima di avviare il servizio, modifica `config.json`:
 Su Windows, copia `config.example.json` in `config.json` e compila con `go build -o opencode2api.exe ./cmd/opencode2api`. Poi avvia il binario dalla directory corrente specificando `-config config.json`.
 
 La configurazione di esempio usa `127.0.0.1:8080` per l'API e `0.0.0.0:8081` per la WebUI. Apri `http://localhost:8081` in locale. Limita l'accesso alla console di gestione e usa un reverse proxy HTTPS per gli accessi dalla rete.
+
+Per servire entrambi su una sola porta, imposta `webui.listen` allo stesso indirizzo di `listen` (per esempio entrambi `0.0.0.0:8080`): `/v1/*` e `/healthz` restano al gateway, mentre la WebUI con i suoi endpoint di gestione `/api/*` risponde su ogni altro percorso di quella porta. La WebUI si trova allora su `http://localhost:8080`. Condividere la porta espone la console di gestione ovunque l'API sia raggiungibile: usa una password robusta e limita l'accesso di conseguenza.
 
 Opzioni da riga di comando:
 

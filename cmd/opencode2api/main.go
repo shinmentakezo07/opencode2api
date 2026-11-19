@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -64,16 +65,25 @@ func main() {
 		Addr: cfg.Listen, Handler: manager.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
 	}
 	servers := []*http.Server{apiServer}
-	go serveHTTP(cancel, logger, apiServer, "api")
+	apiComponent := "api"
 
 	if cfg.WebUI.Enabled {
 		admin := adminui.New(manager, monitor, hub, logger)
-		webServer := &http.Server{
-			Addr: cfg.WebUI.Listen, Handler: admin.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
+		if cfg.WebUI.Listen == cfg.Listen {
+			// Shared-port mode: one listener serves both surfaces. The gateway
+			// owns /v1/* and /healthz; everything else, including /api/* and
+			// the embedded WebUI, goes to the management handler.
+			apiServer.Handler = sharedHandler(manager.Handler(), admin.Handler())
+			apiComponent = "api+webui"
+		} else {
+			webServer := &http.Server{
+				Addr: cfg.WebUI.Listen, Handler: admin.Handler(), ReadHeaderTimeout: 15 * time.Second, IdleTimeout: 120 * time.Second,
+			}
+			servers = append(servers, webServer)
+			go serveHTTP(cancel, logger, webServer, "webui")
 		}
-		servers = append(servers, webServer)
-		go serveHTTP(cancel, logger, webServer, "webui")
 	}
+	go serveHTTP(cancel, logger, apiServer, apiComponent)
 
 	<-ctx.Done()
 	shutdownCtx, shutdownCancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -83,6 +93,19 @@ func main() {
 			logger.Error("graceful shutdown failed", "component", "server", "event", "shutdown_failed", "address", server.Addr, "error", err)
 		}
 	}
+}
+
+// sharedHandler routes the gateway paths (/v1/* and /healthz) to api and
+// everything else to admin, so one listener serves both surfaces when
+// webui.listen equals listen.
+func sharedHandler(api, admin http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/healthz" || r.URL.Path == "/v1" || strings.HasPrefix(r.URL.Path, "/v1/") {
+			api.ServeHTTP(w, r)
+			return
+		}
+		admin.ServeHTTP(w, r)
+	})
 }
 
 // serveHTTP serves server until it is shut down. An unexpected stop is logged

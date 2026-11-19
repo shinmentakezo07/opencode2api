@@ -850,7 +850,7 @@
                     </div>
                     <div class="field">
                       <label for="c-web-listen">WebUI Listen</label>
-                      <input id="c-web-listen" />
+                      <input id="c-web-listen" placeholder="与 API Listen 相同地址时共用一个端口" data-i18n-attr="placeholder:config.server.webListen.placeholder" />
                     </div>
                     <div class="field">
                       <label for="c-session" data-i18n="config.server.session">Session TTL（分钟）</label>
@@ -1234,7 +1234,7 @@
                 <input id="a-current" type="password" autocomplete="current-password" required />
               </div>
               <div class="field">
-                <label for="a-new" data-i18n="account.new">新密码（留空保持，至少 10 字符）</label>
+                <label for="a-new" data-i18n="account.new">新密码（留空保持，至少 6 字符）</label>
                 <input id="a-new" type="password" autocomplete="new-password" />
               </div>
               <div class="actions">

@@ -52,7 +52,7 @@ if [ ! -f "$config_path" ]; then
         seed_container_listen "$config_path"
         seed_example_anonymous "$config_path"
         printf '%s\n' \
-            "config.json not found; created $config_path. Replace the placeholder server key and change the WebUI password before use."
+            "config.json not found; created $config_path. WebUI default login: admin / 3178848 — change it in the WebUI (Account) before use, and replace the placeholder server key."
     fi
 fi
 

@@ -22,10 +22,11 @@ const (
 
 // HashPassword returns an argon2id hash of password with a random 16-byte
 // salt, in the "$argon2id$v=19$m=...,t=...,p=...$salt$hash" form that
-// VerifyPassword reads. Passwords shorter than 10 bytes are rejected.
+// VerifyPassword reads. Passwords shorter than 6 bytes are rejected, matching
+// the config validation floor that admits the documented default password.
 func HashPassword(password string) (string, error) {
-	if len(password) < 10 {
-		return "", errors.New("webui password must contain at least 10 characters")
+	if len(password) < 6 {
+		return "", errors.New("webui password must contain at least 6 characters")
 	}
 	salt := make([]byte, argonSaltLength)
 	if _, err := rand.Read(salt); err != nil {

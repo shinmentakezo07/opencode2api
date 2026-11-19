@@ -262,6 +262,7 @@ const DICTIONARY = {
       "config.server.prefer.go": "Go (fall back to Zen on error)",
       "config.server.prefer.zen": "Zen (fall back to Go on error)",
       "config.server.session": "Session TTL (minutes)",
+      "config.server.webListen.placeholder": "Same address as API Listen serves both on one port",
       "config.server.enabled": "Enable WebUI (restart required after change)",
       "config.secrets.title": "Secrets and anonymous channel",
       "config.secrets.caption":
@@ -449,7 +450,7 @@ const DICTIONARY = {
       "account.caption": "On success every session is revoked and you must sign in again.",
       "account.user": "New username (blank to keep the current one)",
       "account.current": "Current password",
-      "account.new": "New password (blank to keep the current one, at least 10 characters)",
+      "account.new": "New password (blank to keep the current one, at least 6 characters)",
       "account.submit": "Update and sign in again",
 
       "modal.eyebrow": "Sensitive value",
@@ -939,6 +940,7 @@ const DICTIONARY = {
       "config.server.prefer.go": "Go (lỗi thì dự phòng Zen)",
       "config.server.prefer.zen": "Zen (lỗi thì dự phòng Go)",
       "config.server.session": "Session TTL (phút)",
+      "config.server.webListen.placeholder": "Cùng địa chỉ với API Listen sẽ phục vụ cả hai trên một cổng",
       "config.server.enabled": "Bật WebUI (cần khởi động lại khi thay đổi)",
       "config.secrets.title": "Khóa và kênh ẩn danh",
       "config.secrets.caption":
@@ -1075,7 +1077,7 @@ const DICTIONARY = {
       "account.caption": "Thành công sẽ thu hồi toàn bộ Session và yêu cầu đăng nhập lại.",
       "account.user": "Tài khoản mới (để trống để giữ nguyên)",
       "account.current": "Mật khẩu hiện tại",
-      "account.new": "Mật khẩu mới (để trống để giữ nguyên, tối thiểu 10 ký tự)",
+      "account.new": "Mật khẩu mới (để trống để giữ nguyên, tối thiểu 6 ký tự)",
       "account.submit": "Cập nhật và đăng nhập lại",
 
       "modal.eyebrow": "Giá trị nhạy cảm",
@@ -1527,6 +1529,7 @@ const DICTIONARY = {
       "config.server.prefer.go": "Go (fallback su Zen in caso di errore)",
       "config.server.prefer.zen": "Zen (fallback su Go in caso di errore)",
       "config.server.session": "TTL sessione (minuti)",
+      "config.server.webListen.placeholder": "Lo stesso indirizzo di API Listen serve entrambi su una porta",
       "config.server.enabled": "Abilita WebUI (riavvio richiesto dopo la modifica)",
       "config.secrets.title": "Segreti e canale anonimo",
       "config.secrets.caption":
@@ -1665,7 +1668,7 @@ const DICTIONARY = {
       "account.caption": "In caso di successo ogni sessione viene revocata e devi accedere di nuovo.",
       "account.user": "Nuovo nome utente (vuoto per mantenere quello attuale)",
       "account.current": "Password attuale",
-      "account.new": "Nuova password (vuoto per mantenere quella attuale, almeno 10 caratteri)",
+      "account.new": "Nuova password (vuoto per mantenere quella attuale, almeno 6 caratteri)",
       "account.submit": "Aggiorna e accedi di nuovo",
 
       "modal.eyebrow": "Valore sensibile",

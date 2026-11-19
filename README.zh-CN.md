@@ -37,7 +37,7 @@ go build -o opencode2api ./cmd/opencode2api
 
 1. 将 `server_keys` 替换为自己的本地 API Key。
 2. 在 `zen_keys` 填入 Zen API Key（推荐），或在 `go_keys` 填入 Go Key。示例关闭匿名通道，且两个上游 Key 数组为空，必须先配置上游凭证才能启动；已保存的 Go OAuth（`go_oauth`）或 Zen OAuth（`zen_oauth`）连接也满足此要求。不支持在凭证全空时先启动服务、再进入 WebUI 完成首次 OAuth 登录。
-3. 替换 `webui.password`。示例配置启用了 WebUI，用户名为 `admin`。
+3. 设置 `webui.password`（至少 6 字符）。未配置密码时，WebUI 使用默认账号 **admin / 3178848** 登录——对外暴露服务前请在 WebUI（账号安全）中修改。
 
 **匿名通道可能已被上游重点封堵，优先使用 Zen API Key。** 配置与 WebUI 默认关闭匿名访问；已有配置中明确设置的 `anonymous: true` 不会被自动改为关闭。只有接受免费请求仍可能失败时，才主动开启。
 
@@ -48,6 +48,8 @@ go build -o opencode2api ./cmd/opencode2api
 Windows 下使用 `Copy-Item config.example.json config.json` 复制配置，执行 `go build -o opencode2api.exe ./cmd/opencode2api` 编译，再运行 `.\opencode2api.exe -config config.json`。
 
 示例配置的 API 监听 `127.0.0.1:8080`，WebUI 监听 `0.0.0.0:8081`。本机可访问 `http://localhost:8081`。通过网络访问管理界面时，请限制访问范围，并使用 HTTPS 反向代理。
+
+需要共用一个端口时，把 `webui.listen` 设为与 `listen` 相同的地址（例如都是 `0.0.0.0:8080`）：`/v1/*` 与 `/healthz` 仍走网关，WebUI 及其 `/api/*` 管理接口接管该端口的其余路径，管理界面即 `http://localhost:8080`。共用端口意味着 API 可达之处管理控制台也可达，务必使用强密码并限制访问范围。
 
 命令行参数：
 

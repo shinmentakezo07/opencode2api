@@ -17,7 +17,7 @@ export GOMODCACHE="$PWD/.local/go-modules"
 go build -trimpath -o opencode2api ./cmd/opencode2api
 ```
 
-Trước khi chạy, chỉnh cấu hình trên máy: thay `server_keys` và `webui.password`, rồi điền `zen_keys` hoặc `go_keys`. Khi chỉ quản trị cục bộ, nên dùng `webui.listen: "127.0.0.1:8081"`; giá trị mẫu `0.0.0.0:8081` lắng nghe trên mọi giao diện. Mật khẩu phải có ít nhất 10 ký tự; tên quản trị viên trong cấu hình mẫu là `admin`.
+Trước khi chạy, chỉnh cấu hình trên máy: thay `server_keys`, đặt `webui.password`, rồi điền `zen_keys` hoặc `go_keys`. Khi chỉ quản trị cục bộ, nên dùng `webui.listen: "127.0.0.1:8081"`; giá trị mẫu `0.0.0.0:8081` lắng nghe trên mọi giao diện. Mật khẩu phải có ít nhất 6 ký tự. Khi chưa đặt `webui.username`/`webui.password`, WebUI dùng tài khoản mặc định **admin / 3178848**; hãy đổi trong trang Tài khoản trước khi mở dịch vụ ra ngoài.
 
 ```bash
 ./opencode2api -config config.json
@@ -73,7 +73,7 @@ Các giá trị mặc định quản trị thường dùng:
 | Cấu hình | Mặc định / phạm vi |
 | --- | --- |
 | `webui.enabled` | Mặc định tích hợp là tắt; cấu hình mẫu bật. |
-| `webui.listen` | `0.0.0.0:8081`. |
+| `webui.listen` | `0.0.0.0:8081`. Đặt cùng địa chỉ với `listen` thì API và WebUI dùng chung một cổng: `/v1/*` và `/healthz` vào gateway, phần còn lại vào bảng quản trị. |
 | `logging.level` | `info`; hỗ trợ `debug`, `info`, `warn`, `error`. |
 | `logging.ring_size` | `2000`; phạm vi 100–50.000. |
 | `logging.dump_request_bodies` | `false`; cần thêm mức debug để xuất, tối đa 64 KiB cho mỗi nội dung yêu cầu đã chuẩn bị. |

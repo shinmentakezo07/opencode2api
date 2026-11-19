@@ -483,8 +483,10 @@ func Normalize(path string, cfg Config) (Config, error) {
 	if cfg.Logging.RingSize < 100 || cfg.Logging.RingSize > 50000 {
 		return Config{}, errors.New("logging.ring_size must be between 100 and 50000")
 	}
-	if cfg.WebUI.Password != "" && len(cfg.WebUI.Password) < 10 {
-		return Config{}, errors.New("webui.password must contain at least 10 characters")
+	// 6 is the floor so the documented default password (3178848) is a legal
+	// value; operators should still choose a strong one.
+	if cfg.WebUI.Password != "" && len(cfg.WebUI.Password) < 6 {
+		return Config{}, errors.New("webui.password must contain at least 6 characters")
 	}
 	if cfg.WebUI.Enabled {
 		cfg.WebUI.Listen = strings.TrimSpace(cfg.WebUI.Listen)
@@ -493,10 +495,13 @@ func Normalize(path string, cfg Config) (Config, error) {
 			return Config{}, errors.New("webui.listen must not be empty when webui is enabled")
 		}
 		if cfg.WebUI.Username == "" {
-			return Config{}, errors.New("webui.username must not be empty when webui is enabled")
+			cfg.WebUI.Username = "admin"
 		}
 		if cfg.WebUI.Password == "" && cfg.WebUI.PasswordHash == "" {
-			return Config{}, errors.New("webui.password is required for first-time setup")
+			// No credential configured: fall back to the documented default
+			// login (admin / 3178848) instead of refusing to start. The
+			// password is hashed by the runtime's password migration.
+			cfg.WebUI.Password = "3178848"
 		}
 		if cfg.WebUI.SessionTTLMinutes < 5 || cfg.WebUI.SessionTTLMinutes > 10080 {
 			return Config{}, errors.New("webui.session_ttl_minutes must be between 5 and 10080")

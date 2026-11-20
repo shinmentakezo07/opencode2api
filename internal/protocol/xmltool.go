@@ -361,6 +361,15 @@ func parseTextJSONCall(payload map[string]any, nameAttribute string, renames *To
 	arguments := "{}"
 	if raw, ok := firstTextValue(payload, "arguments", "parameters", "params", "input", "args"); ok {
 		arguments = textArguments(raw)
+	} else if nested, ok := payload["function"].(map[string]any); ok {
+		// Legacy OpenAI shape: {"function":{"name":"…","arguments":{…}}}.
+		// The name helper already reads function.name, so read its arguments
+		// from the same object instead of dropping them.
+		if raw, ok := firstTextValue(nested, "arguments", "parameters", "params", "input", "args"); ok {
+			arguments = textArguments(raw)
+		} else if nameAttribute != "" {
+			arguments = textArguments(nested)
+		}
 	} else if nameAttribute != "" {
 		arguments = textArguments(payload)
 	}
@@ -464,7 +473,9 @@ func parseTextTagArguments(body string) string {
 			break
 		}
 		rawTag := body[opening+1 : opening+1+close]
-		key := strings.TrimSpace(rawTag)
+		trimmedTag := strings.TrimSpace(rawTag)
+		selfClosing := strings.HasSuffix(trimmedTag, "/")
+		key := trimmedTag
 		if cut := strings.IndexAny(key, " \t\r\n"); cut >= 0 {
 			key = key[:cut]
 		}
@@ -481,6 +492,12 @@ func parseTextTagArguments(body string) string {
 		body = body[opening+1+close+1:]
 		if key == "" || strings.HasPrefix(key, "/") {
 			// Skip closing tags; only opening tags name a parameter.
+			continue
+		}
+		if selfClosing {
+			// <flag/> has no body and no closing tag; record its empty value
+			// instead of treating the rest of the call as its value.
+			arguments[key] = parseTextValue("")
 			continue
 		}
 		end := strings.Index(body, "</"+tagName+">")

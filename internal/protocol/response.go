@@ -109,6 +109,13 @@ func decodeBridgeResponse(protocol Protocol, input map[string]any) (bridgeRespon
 					Name:          jsonutil.StringAt(item, "name"),
 					ArgumentsJSON: jsonutil.StringAt(item, "arguments"),
 				})
+			case "custom_tool_call":
+				response.Tools = append(response.Tools, bridgeBlock{
+					Kind:          "tool_call",
+					ID:            jsonutil.FirstString(jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "id")),
+					Name:          jsonutil.StringAt(item, "name"),
+					ArgumentsJSON: customToolArguments(item["input"]),
+				})
 			default:
 				return response, fmt.Errorf("Responses response has unsupported output item type %q", jsonutil.StringAt(item, "type"))
 			}

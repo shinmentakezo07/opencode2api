@@ -524,7 +524,14 @@ func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest
 						Name:          jsonutil.StringAt(item, "name"),
 						ArgumentsJSON: jsonutil.StringAt(item, "arguments"),
 					})
-				case "function_call_output":
+				case "custom_tool_call":
+					appendBridgeBlock(&request.Messages, "assistant", bridgeBlock{
+						Kind:          "tool_call",
+						ID:            jsonutil.FirstString(jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "id")),
+						Name:          jsonutil.StringAt(item, "name"),
+						ArgumentsJSON: customToolArguments(item["input"]),
+					})
+				case "function_call_output", "custom_tool_call_output":
 					appendBridgeBlock(&request.Messages, "user", bridgeBlock{
 						Kind:   "tool_result",
 						CallID: jsonutil.StringAt(item, "call_id"),
@@ -560,14 +567,20 @@ func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest
 			// Built-in Responses tools (web_search, file_search, code_interpreter, …)
 			// have no Chat/Anthropic equivalent; skip them during cross-protocol
 			// bridging so requests that mix function tools with built-in plugins
-			// still reach the upstream.
-			if jsonutil.StringAt(tool, "type") != "function" {
+			// still reach the upstream. A custom tool is bridged as a function
+			// taking its freeform input as one string parameter.
+			kind := jsonutil.StringAt(tool, "type")
+			if kind != "function" && kind != "custom" {
 				continue
+			}
+			schema := tool["parameters"]
+			if kind == "custom" && schema == nil {
+				schema = customToolSchema()
 			}
 			request.Tools = append(request.Tools, bridgeTool{
 				Name:        jsonutil.StringAt(tool, "name"),
 				Description: jsonutil.StringAt(tool, "description"),
-				Schema:      tool["parameters"],
+				Schema:      schema,
 				Strict:      jsonutil.BoolAt(tool, "strict"),
 			})
 		}

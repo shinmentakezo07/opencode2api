@@ -1,6 +1,7 @@
 package protocol
 
 import (
+	"encoding/json"
 	"strings"
 
 	"opencode2api/internal/jsonutil"
@@ -173,6 +174,50 @@ func schemaOrDefault(value any) any {
 		return map[string]any{"type": "object", "properties": map[string]any{}}
 	}
 	return value
+}
+
+// customToolSchema is the function schema a Responses custom tool gets when
+// the target protocol has no freeform tool type. A custom tool takes one
+// freeform string, so it is bridged as one required "input" parameter.
+func customToolSchema() map[string]any {
+	return map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string"},
+		},
+		"required": []any{"input"},
+	}
+}
+
+// customToolArguments renders a Responses custom tool call's freeform input as
+// the JSON argument string an OpenAI-style function call carries. Object JSON
+// is kept as-is; anything else is wrapped under "input" so the target body
+// stays valid.
+func customToolArguments(input any) string {
+	switch value := input.(type) {
+	case nil:
+		return "{}"
+	case string:
+		trimmed := strings.TrimSpace(value)
+		if trimmed == "" {
+			return "{}"
+		}
+		var object map[string]any
+		if json.Unmarshal([]byte(trimmed), &object) == nil {
+			return trimmed
+		}
+		encoded, err := json.Marshal(map[string]any{"input": value})
+		if err != nil {
+			return "{}"
+		}
+		return string(encoded)
+	default:
+		encoded, err := json.Marshal(map[string]any{"input": value})
+		if err != nil {
+			return "{}"
+		}
+		return string(encoded)
+	}
 }
 
 // chatResponseFormat converts a bridge-level response format into the OpenAI

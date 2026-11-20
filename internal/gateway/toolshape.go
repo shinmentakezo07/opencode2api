@@ -435,10 +435,11 @@ func sanitizeToolHistory(payload map[string]any, protocol wire.Protocol, declare
 		keptItems := make([]any, 0, len(items))
 		for _, rawItem := range items {
 			item, _ := rawItem.(map[string]any)
-			if jsonutil.StringAt(item, "type") == "function_call_output" && dropped[jsonutil.StringAt(item, "call_id")] {
+			kind := jsonutil.StringAt(item, "type")
+			if (kind == "function_call_output" || kind == "custom_tool_call_output") && dropped[jsonutil.StringAt(item, "call_id")] {
 				continue
 			}
-			if kind := jsonutil.StringAt(item, "type"); kind == "function_call" || kind == "custom_tool_call" {
+			if kind == "function_call" || kind == "custom_tool_call" {
 				if _, ok := historyToolWireName(jsonutil.StringAt(item, "name"), declared, renames, laneOfficial); !ok {
 					continue
 				}

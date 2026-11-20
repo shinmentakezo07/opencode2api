@@ -28,6 +28,7 @@ type bridgeStreamTool struct {
 	AnthropicIndex   int
 	Started          bool
 	EmittedArguments int
+	Custom           bool
 }
 
 // bridgeStreamEncoder turns bridge stream events into one downstream protocol's
@@ -52,8 +53,9 @@ type bridgeStreamEncoder struct {
 	reasoning          strings.Builder
 	reasoningSignature strings.Builder
 
-	tools map[string]*bridgeStreamTool
-	order []string
+	tools       map[string]*bridgeStreamTool
+	order       []string
+	customTools map[string]bool
 
 	sequence        int
 	nextOutput      int
@@ -72,14 +74,15 @@ type bridgeStreamEncoder struct {
 // bridgeStreamEmitter builds an encoder for the target protocol. The response
 // ID is taken from the first event that carries one and the model from the
 // last event that carries one, so the constructor's model is only a fallback.
-func bridgeStreamEmitter(writer io.Writer, flusher http.Flusher, target Protocol, model string) *bridgeStreamEncoder {
+func bridgeStreamEmitter(writer io.Writer, flusher http.Flusher, target Protocol, model string, options ResponseOptions) *bridgeStreamEncoder {
 	return &bridgeStreamEncoder{
-		w:       writer,
-		flush:   flusher,
-		target:  target,
-		model:   model,
-		created: time.Now().Unix(),
-		tools:   map[string]*bridgeStreamTool{},
+		w:           writer,
+		flush:       flusher,
+		target:      target,
+		model:       model,
+		created:     time.Now().Unix(),
+		tools:       map[string]*bridgeStreamTool{},
+		customTools: options.CustomTools,
 	}
 }
 
@@ -135,6 +138,9 @@ func (emitter *bridgeStreamEncoder) Emit(event bridgeStreamEvent) error {
 		if event.ToolName != "" {
 			tool.Name = event.ToolName
 		}
+		if event.Custom {
+			tool.Custom = true
+		}
 		if err := emitter.startTool(tool); err != nil {
 			return err
 		}
@@ -146,6 +152,9 @@ func (emitter *bridgeStreamEncoder) Emit(event bridgeStreamEvent) error {
 		}
 		if event.ToolName != "" {
 			tool.Name = event.ToolName
+		}
+		if event.Custom {
+			tool.Custom = true
 		}
 		tool.Arguments.WriteString(event.Text)
 		if err := emitter.startTool(tool); err != nil {
@@ -444,6 +453,9 @@ func (emitter *bridgeStreamEncoder) startTool(tool *bridgeStreamTool) error {
 	if tool.Started || tool.Name == "" {
 		return nil
 	}
+	if emitter.target == Responses && emitter.customTools[tool.Name] {
+		tool.Custom = true
+	}
 	if emitter.target == Responses || emitter.target == Anthropic {
 		if err := emitter.finishReasoning(); err != nil {
 			return err
@@ -471,6 +483,9 @@ func (emitter *bridgeStreamEncoder) startTool(tool *bridgeStreamTool) error {
 		tool.Index = emitter.nextOutput
 		emitter.nextOutput++
 		item := map[string]any{"id": tool.ItemID, "type": "function_call", "status": "in_progress", "arguments": "", "call_id": tool.ID, "name": tool.Name}
+		if tool.Custom {
+			item = map[string]any{"id": tool.ItemID, "type": "custom_tool_call", "status": "in_progress", "input": "", "call_id": tool.ID, "name": tool.Name}
+		}
 		return emitter.sse("response.output_item.added", map[string]any{"type": "response.output_item.added", "output_index": tool.Index, "item": item, "sequence_number": emitter.nextSequence()})
 	case Anthropic:
 		tool.AnthropicIndex = emitter.nextAnthropic
@@ -508,6 +523,11 @@ func (emitter *bridgeStreamEncoder) emitToolDelta(tool *bridgeStreamTool, delta 
 // so nothing is lost when the name arrives late.
 func (emitter *bridgeStreamEncoder) emitPendingToolArguments(tool *bridgeStreamTool) error {
 	if !tool.Started {
+		return nil
+	}
+	if emitter.target == Responses && tool.Custom {
+		// Custom input is freeform, but the bridge arguments are a JSON object.
+		// Hold them until the call ends so they can be unwrapped and sent once.
 		return nil
 	}
 	arguments := tool.Arguments.String()
@@ -614,9 +634,9 @@ func (emitter *bridgeStreamEncoder) Finish() error {
 		}
 		for _, key := range emitter.order {
 			tool := emitter.tools[key]
-			response.Tools = append(response.Tools, bridgeBlock{Kind: "tool_call", ID: tool.ID, Name: tool.Name, ArgumentsJSON: tool.Arguments.String()})
+			response.Tools = append(response.Tools, bridgeBlock{Kind: "tool_call", ID: tool.ID, Name: tool.Name, ArgumentsJSON: tool.Arguments.String(), Custom: tool.Custom})
 		}
-		completed := encodeBridgeResponse(Responses, response)
+		completed := encodeBridgeResponse(Responses, response, ResponseOptions{CustomTools: emitter.customTools})
 		return emitter.sse("response.completed", map[string]any{"type": "response.completed", "response": completed, "sequence_number": emitter.nextSequence()})
 	}
 	return nil
@@ -651,6 +671,22 @@ func (emitter *bridgeStreamEncoder) finishResponsesItems() error {
 		}
 		if err := emitter.emitPendingToolArguments(tool); err != nil {
 			return err
+		}
+		if tool.Custom {
+			input := customToolInput(arguments)
+			if input != "" {
+				if err := emitter.sse("response.custom_tool_call_input.delta", map[string]any{"type": "response.custom_tool_call_input.delta", "delta": input, "item_id": tool.ItemID, "output_index": tool.Index, "sequence_number": emitter.nextSequence()}); err != nil {
+					return err
+				}
+			}
+			if err := emitter.sse("response.custom_tool_call_input.done", map[string]any{"type": "response.custom_tool_call_input.done", "input": input, "item_id": tool.ItemID, "output_index": tool.Index, "sequence_number": emitter.nextSequence()}); err != nil {
+				return err
+			}
+			item := map[string]any{"id": tool.ItemID, "type": "custom_tool_call", "status": "completed", "input": input, "call_id": tool.ID, "name": tool.Name}
+			if err := emitter.sse("response.output_item.done", map[string]any{"type": "response.output_item.done", "output_index": tool.Index, "item": item, "sequence_number": emitter.nextSequence()}); err != nil {
+				return err
+			}
+			continue
 		}
 		if err := emitter.sse("response.function_call_arguments.done", map[string]any{"type": "response.function_call_arguments.done", "arguments": arguments, "item_id": tool.ItemID, "output_index": tool.Index, "sequence_number": emitter.nextSequence()}); err != nil {
 			return err

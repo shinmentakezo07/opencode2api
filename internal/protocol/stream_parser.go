@@ -22,6 +22,12 @@ type bridgeStreamParser struct {
 	toolOrder         []string
 	responseArgs      map[string]bool
 	responseReasoning map[string]bool
+	// Custom tools stream their freeform input through their own events. The
+	// input is accumulated so the bridged function arguments stay valid JSON,
+	// and the sent set stops a done event from repeating what already arrived.
+	responseCustom      map[string]bool
+	responseCustomInput map[string]string
+	responseCustomSent  map[string]bool
 }
 
 // Parse turns one SSE event of the parser's protocol into zero or more bridge
@@ -234,14 +240,34 @@ func (parser *bridgeStreamParser) parseResponses(eventName string, value map[str
 		return []bridgeStreamEvent{{Kind: "reasoning", Text: jsonutil.StringAt(value, "delta")}}
 	case "response.output_item.added":
 		item := jsonutil.MapAt(value, "item")
-		if jsonutil.StringAt(item, "type") == "function_call" {
+		kind := jsonutil.StringAt(item, "type")
+		if kind == "function_call" || kind == "custom_tool_call" {
 			key := responseToolKey(value, item)
 			parser.rememberTool(key, jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "name"))
+			if kind == "custom_tool_call" {
+				parser.markCustomTool(key)
+			}
 			if parser.toolNames[key] != "" {
 				parser.tools[key] = true
-				return []bridgeStreamEvent{{Kind: "tool_start", ToolKey: key, ToolID: parser.toolIDs[key], ToolName: parser.toolNames[key]}}
+				return []bridgeStreamEvent{{Kind: "tool_start", ToolKey: key, ToolID: parser.toolIDs[key], ToolName: parser.toolNames[key], Custom: parser.isCustomTool(key)}}
 			}
 		}
+	case "response.custom_tool_call_input.delta":
+		key := responseToolKey(value, nil)
+		parser.markCustomTool(key)
+		parser.addCustomInput(key, jsonutil.StringAt(value, "delta"))
+	case "response.custom_tool_call_input.done":
+		key := responseToolKey(value, nil)
+		parser.markCustomTool(key)
+		if parser.customInputSent(key) {
+			return nil
+		}
+		parser.markCustomInputSent(key)
+		input := jsonutil.StringAt(value, "input")
+		if input == "" {
+			input = parser.customInput(key)
+		}
+		return []bridgeStreamEvent{{Kind: "tool_delta", ToolKey: key, ToolID: parser.toolIDs[key], ToolName: parser.toolNames[key], Text: customToolArguments(input), Custom: true}}
 	case "response.function_call_arguments.delta":
 		key := responseToolKey(value, nil)
 		parser.responseArgs[key] = true
@@ -265,7 +291,8 @@ func (parser *bridgeStreamParser) parseResponses(eventName string, value map[str
 			}
 			return nil
 		}
-		if jsonutil.StringAt(item, "type") == "function_call" {
+		kind := jsonutil.StringAt(item, "type")
+		if kind == "function_call" {
 			key := responseToolKey(value, item)
 			parser.rememberTool(key, jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "name"))
 			events := make([]bridgeStreamEvent, 0, 2)
@@ -277,6 +304,25 @@ func (parser *bridgeStreamParser) parseResponses(eventName string, value map[str
 				if arguments := jsonutil.StringAt(item, "arguments"); arguments != "" {
 					events = append(events, bridgeStreamEvent{Kind: "tool_delta", ToolKey: key, Text: arguments})
 				}
+			}
+			return events
+		}
+		if kind == "custom_tool_call" {
+			key := responseToolKey(value, item)
+			parser.rememberTool(key, jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "name"))
+			parser.markCustomTool(key)
+			events := make([]bridgeStreamEvent, 0, 2)
+			if !parser.tools[key] {
+				parser.tools[key] = true
+				events = append(events, bridgeStreamEvent{Kind: "tool_start", ToolKey: key, ToolID: parser.toolIDs[key], ToolName: parser.toolNames[key], Custom: true})
+			}
+			if !parser.customInputSent(key) {
+				input := jsonutil.StringAt(item, "input")
+				if input == "" {
+					input = parser.customInput(key)
+				}
+				parser.markCustomInputSent(key)
+				events = append(events, bridgeStreamEvent{Kind: "tool_delta", ToolKey: key, ToolID: parser.toolIDs[key], ToolName: parser.toolNames[key], Text: customToolArguments(input), Custom: true})
 			}
 			return events
 		}
@@ -317,7 +363,8 @@ func (parser *bridgeStreamParser) parseResponses(eventName string, value map[str
 func (parser *bridgeStreamParser) responsesCompletedStop(response map[string]any) string {
 	for _, raw := range jsonutil.SliceAt(response, "output") {
 		item, _ := raw.(map[string]any)
-		if jsonutil.StringAt(item, "type") == "function_call" {
+		switch jsonutil.StringAt(item, "type") {
+		case "function_call", "custom_tool_call":
 			return "tool_calls"
 		}
 	}
@@ -386,6 +433,47 @@ func mergeToolName(current, fragment string) string {
 		return fragment
 	}
 	return current + fragment
+}
+
+// markCustomTool records that a Responses tool call uses the freeform custom
+// shape, lazily creating the map because parsers are also built as literals.
+func (parser *bridgeStreamParser) markCustomTool(key string) {
+	if parser.responseCustom == nil {
+		parser.responseCustom = map[string]bool{}
+	}
+	parser.responseCustom[key] = true
+}
+
+// isCustomTool reports whether the stream key was seen as a custom tool call.
+func (parser *bridgeStreamParser) isCustomTool(key string) bool {
+	return parser.responseCustom[key]
+}
+
+// addCustomInput accumulates freeform input deltas until the tool call ends,
+// because the bridged function arguments must be emitted as one JSON object.
+func (parser *bridgeStreamParser) addCustomInput(key, delta string) {
+	if parser.responseCustomInput == nil {
+		parser.responseCustomInput = map[string]string{}
+	}
+	parser.responseCustomInput[key] += delta
+}
+
+// customInput returns the accumulated freeform input for a stream key.
+func (parser *bridgeStreamParser) customInput(key string) string {
+	return parser.responseCustomInput[key]
+}
+
+// customInputSent reports whether the tool's bridged arguments were emitted.
+func (parser *bridgeStreamParser) customInputSent(key string) bool {
+	return parser.responseCustomSent[key]
+}
+
+// markCustomInputSent records that the tool's bridged arguments were emitted.
+func (parser *bridgeStreamParser) markCustomInputSent(key string) {
+	if parser.responseCustomSent == nil {
+		parser.responseCustomSent = map[string]bool{}
+	}
+	parser.responseCustomSent[key] = true
 }
 
 // responseToolKey identifies the tool call a Responses event belongs to: the

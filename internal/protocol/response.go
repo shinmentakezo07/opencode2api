@@ -11,12 +11,26 @@ import (
 	"opencode2api/internal/jsonutil"
 )
 
+// ResponseOptions carries request context that a response alone cannot supply.
+// CustomTools holds the client-facing names of Responses tools declared with
+// the freeform "custom" type, so a tool call that crossed the bridge as a
+// one-parameter function is encoded back as a custom_tool_call.
+type ResponseOptions struct {
+	CustomTools map[string]bool
+}
+
 // ConvertResponse converts a serialized response body from one protocol to
 // another. A same-protocol body is returned as a copy, unchanged; otherwise
 // the body is decoded into the bridge model and re-encoded for the target. An
 // upstream error envelope becomes an error, and so does a body the target
 // protocol cannot represent.
 func ConvertResponse(from, to Protocol, body []byte) ([]byte, error) {
+	return ConvertResponseWithOptions(from, to, body, ResponseOptions{})
+}
+
+// ConvertResponseWithOptions is ConvertResponse with the request context from
+// ResponseOptions, such as the custom tools the client declared.
+func ConvertResponseWithOptions(from, to Protocol, body []byte, options ResponseOptions) ([]byte, error) {
 	if from == to {
 		return append([]byte(nil), body...), nil
 	}
@@ -31,7 +45,7 @@ func ConvertResponse(from, to Protocol, body []byte) ([]byte, error) {
 	if response.Error != "" || response.Stop == "error" {
 		return nil, &StreamFailure{Message: response.Error, Type: "upstream_error"}
 	}
-	return json.Marshal(encodeBridgeResponse(to, response))
+	return json.Marshal(encodeBridgeResponse(to, response, options))
 }
 
 // decodeBridgeResponse decodes a complete response body of the given protocol
@@ -115,6 +129,7 @@ func decodeBridgeResponse(protocol Protocol, input map[string]any) (bridgeRespon
 					ID:            jsonutil.FirstString(jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "id")),
 					Name:          jsonutil.StringAt(item, "name"),
 					ArgumentsJSON: customToolArguments(item["input"]),
+					Custom:        true,
 				})
 			default:
 				return response, fmt.Errorf("Responses response has unsupported output item type %q", jsonutil.StringAt(item, "type"))
@@ -162,7 +177,7 @@ func decodeBridgeResponse(protocol Protocol, input map[string]any) (bridgeRespon
 // body. A tool stop with no usable tool block is demoted to a plain stop first
 // (the reason is spelled out at the guard below), and an ID is synthesized when
 // the response has none.
-func encodeBridgeResponse(protocol Protocol, response bridgeResponse) map[string]any {
+func encodeBridgeResponse(protocol Protocol, response bridgeResponse, options ResponseOptions) map[string]any {
 	if response.ID == "" {
 		response.ID = identity.RandomID("resp", 12)
 	}
@@ -232,14 +247,7 @@ func encodeBridgeResponse(protocol Protocol, response bridgeResponse) map[string
 			})
 		}
 		for _, tool := range response.Tools {
-			output = append(output, map[string]any{
-				"id":        identity.RandomID("fc", 12),
-				"type":      "function_call",
-				"status":    "completed",
-				"call_id":   tool.ID,
-				"name":      tool.Name,
-				"arguments": bridgeArgumentsJSON(tool),
-			})
+			output = append(output, encodeResponsesToolItem(tool, options))
 		}
 		status := "completed"
 		var incomplete any
@@ -295,6 +303,31 @@ func encodeBridgeResponse(protocol Protocol, response bridgeResponse) map[string
 		}
 	default:
 		return map[string]any{}
+	}
+}
+
+// encodeResponsesToolItem renders one tool call as the Responses output item
+// the client expects. A call the client declared as a custom tool, or one that
+// was decoded from a custom_tool_call, becomes a custom_tool_call with the
+// bridged one-parameter arguments unwrapped back to freeform input.
+func encodeResponsesToolItem(tool bridgeBlock, options ResponseOptions) map[string]any {
+	if tool.Custom || options.CustomTools[tool.Name] {
+		return map[string]any{
+			"id":      identity.RandomID("ctc", 12),
+			"type":    "custom_tool_call",
+			"status":  "completed",
+			"call_id": tool.ID,
+			"name":    tool.Name,
+			"input":   customToolInput(bridgeArgumentsJSON(tool)),
+		}
+	}
+	return map[string]any{
+		"id":        identity.RandomID("fc", 12),
+		"type":      "function_call",
+		"status":    "completed",
+		"call_id":   tool.ID,
+		"name":      tool.Name,
+		"arguments": bridgeArgumentsJSON(tool),
 	}
 }
 

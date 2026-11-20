@@ -51,7 +51,7 @@ const (
 // upstream stream and encoded for the downstream protocol. Kind selects which
 // fields matter: "start" (ResponseID, Model), "text", "reasoning" (Text and/or
 // Encrypted), "reasoning_signature" (Signature), "tool_start" and "tool_delta"
-// (ToolKey, ToolID, ToolName, Text), "usage", "finish" (Stop), "error"
+// (ToolKey, ToolID, ToolName, Text, Custom), "usage", "finish" (Stop), "error"
 // (Error, ErrorType) and "done".
 type bridgeStreamEvent struct {
 	Kind       string
@@ -67,6 +67,7 @@ type bridgeStreamEvent struct {
 	ErrorType  string
 	Encrypted  string
 	Usage      *Usage
+	Custom     bool
 }
 
 // TranscodeStream parses an upstream stream of one protocol and re-encodes it
@@ -84,6 +85,12 @@ type bridgeStreamEvent struct {
 // cancels the request context when the client goes away, and writing after
 // that only wastes the remaining attempt.
 func TranscodeStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, model string) (Usage, bool, error) {
+	return TranscodeStreamWithOptions(ctx, w, reader, from, to, model, ResponseOptions{})
+}
+
+// TranscodeStreamWithOptions is TranscodeStream with the request context from
+// ResponseOptions, such as the custom tools the client declared.
+func TranscodeStreamWithOptions(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, model string, options ResponseOptions) (Usage, bool, error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return Usage{}, false, fmt.Errorf("response writer does not support streaming")
@@ -96,7 +103,7 @@ func TranscodeStream(ctx context.Context, w http.ResponseWriter, reader io.Reade
 		responseArgs:      map[string]bool{},
 		responseReasoning: map[string]bool{},
 	}
-	emitter := bridgeStreamEmitter(w, flusher, to, model)
+	emitter := bridgeStreamEmitter(w, flusher, to, model, options)
 	termination := streamOpen
 	readErr := readSSE(reader, func(eventName, data string) error {
 		events, err := parser.Parse(eventName, data)
@@ -230,7 +237,7 @@ func ForwardStream(ctx context.Context, w http.ResponseWriter, reader io.Reader,
 		WriteError(w, protocol, http.StatusBadGateway, "upstream SSE stream failed", "upstream_error", "")
 		return usage, observer.Reported(), cause
 	}
-	emitter := bridgeStreamEmitter(w, flusher, protocol, model)
+	emitter := bridgeStreamEmitter(w, flusher, protocol, model, ResponseOptions{})
 	if err := emitUnexpectedStreamError(emitter, cause); err != nil {
 		return usage, observer.Reported(), err
 	}

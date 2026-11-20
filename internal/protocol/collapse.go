@@ -62,7 +62,7 @@ func CollapseStream(reader io.Reader, protocol Protocol, model string) ([]byte, 
 		}
 		return nil, errSSEUnexpectedEOF
 	}
-	return json.Marshal(encodeBridgeResponse(protocol, acc.response))
+	return json.Marshal(encodeBridgeResponse(protocol, acc.response, ResponseOptions{}))
 }
 
 // collapseAccumulator folds bridge stream events into one bridgeResponse.
@@ -101,9 +101,9 @@ func (acc *collapseAccumulator) apply(event bridgeStreamEvent) {
 	case "reasoning_signature":
 		acc.reasoningBlock().Signature += event.Signature
 	case "tool_start":
-		acc.toolBlock(event.ToolKey, event.ToolID, event.ToolName)
+		acc.toolBlock(event.ToolKey, event.ToolID, event.ToolName, event.Custom)
 	case "tool_delta":
-		block := acc.toolBlock(event.ToolKey, event.ToolID, event.ToolName)
+		block := acc.toolBlock(event.ToolKey, event.ToolID, event.ToolName, event.Custom)
 		block.ArgumentsJSON += event.Text
 	case "usage":
 		if event.Usage != nil {
@@ -133,7 +133,7 @@ func (acc *collapseAccumulator) splitReasoning() {
 
 // toolBlock returns the tool call for a stream tool key, appending it on first
 // sight and filling in an ID or name that earlier events lacked.
-func (acc *collapseAccumulator) toolBlock(key, id, name string) *bridgeBlock {
+func (acc *collapseAccumulator) toolBlock(key, id, name string, custom bool) *bridgeBlock {
 	if index, ok := acc.tools[key]; ok {
 		block := &acc.response.Tools[index]
 		if block.ID == "" {
@@ -142,9 +142,12 @@ func (acc *collapseAccumulator) toolBlock(key, id, name string) *bridgeBlock {
 		if block.Name == "" {
 			block.Name = name
 		}
+		if custom {
+			block.Custom = true
+		}
 		return block
 	}
-	acc.response.Tools = append(acc.response.Tools, bridgeBlock{Kind: "tool_call", ID: id, Name: name})
+	acc.response.Tools = append(acc.response.Tools, bridgeBlock{Kind: "tool_call", ID: id, Name: name, Custom: custom})
 	acc.tools[key] = len(acc.response.Tools) - 1
 	return &acc.response.Tools[len(acc.response.Tools)-1]
 }

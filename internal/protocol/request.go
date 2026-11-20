@@ -530,6 +530,7 @@ func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest
 						ID:            jsonutil.FirstString(jsonutil.StringAt(item, "call_id"), jsonutil.StringAt(item, "id")),
 						Name:          jsonutil.StringAt(item, "name"),
 						ArgumentsJSON: customToolArguments(item["input"]),
+						Custom:        true,
 					})
 				case "function_call_output", "custom_tool_call_output":
 					appendBridgeBlock(&request.Messages, "user", bridgeBlock{
@@ -582,6 +583,7 @@ func decodeBridgeRequest(protocol Protocol, input map[string]any) (bridgeRequest
 				Description: jsonutil.StringAt(tool, "description"),
 				Schema:      schema,
 				Strict:      jsonutil.BoolAt(tool, "strict"),
+				Custom:      kind == "custom",
 			})
 		}
 		request.ToolChoice = decodeResponsesToolChoice(input["tool_choice"])

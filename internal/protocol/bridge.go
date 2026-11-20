@@ -43,6 +43,10 @@ type bridgeBlock struct {
 	CallID        string
 	Result        any
 	IsError       bool
+	// Custom marks a tool call that came from a Responses custom_tool_call,
+	// whose freeform input is bridged as a one-parameter function. It lets a
+	// same-protocol or converted Responses reply restore the custom shape.
+	Custom bool
 }
 
 type bridgeMessage struct {
@@ -55,6 +59,7 @@ type bridgeTool struct {
 	Description string
 	Schema      any
 	Strict      bool
+	Custom      bool
 }
 
 // bridgeToolChoice is a decoded tool_choice. Mode is "auto", "none",
@@ -190,34 +195,59 @@ func customToolSchema() map[string]any {
 }
 
 // customToolArguments renders a Responses custom tool call's freeform input as
-// the JSON argument string an OpenAI-style function call carries. Object JSON
-// is kept as-is; anything else is wrapped under "input" so the target body
-// stays valid.
+// the JSON argument string an OpenAI-style function call carries. The input is
+// always wrapped under "input", even when it happens to look like JSON, so
+// customToolInput can recover the exact freeform string on the way back.
 func customToolArguments(input any) string {
-	switch value := input.(type) {
-	case nil:
+	if input == nil {
 		return "{}"
-	case string:
-		trimmed := strings.TrimSpace(value)
-		if trimmed == "" {
-			return "{}"
-		}
-		var object map[string]any
-		if json.Unmarshal([]byte(trimmed), &object) == nil {
-			return trimmed
-		}
-		encoded, err := json.Marshal(map[string]any{"input": value})
-		if err != nil {
-			return "{}"
-		}
-		return string(encoded)
-	default:
-		encoded, err := json.Marshal(map[string]any{"input": value})
-		if err != nil {
-			return "{}"
-		}
-		return string(encoded)
 	}
+	encoded, err := json.Marshal(map[string]any{"input": input})
+	if err != nil {
+		return "{}"
+	}
+	return string(encoded)
+}
+
+// customToolInput recovers the freeform input from the one-parameter function
+// arguments a custom tool call was bridged into. An arguments object with
+// exactly one string "input" unwraps to that string; any other shape is kept
+// verbatim so a model that ignored the wrapper still produces a Custom item.
+func customToolInput(arguments string) string {
+	trimmed := strings.TrimSpace(arguments)
+	if trimmed == "" || trimmed == "{}" {
+		return ""
+	}
+	var object map[string]any
+	if json.Unmarshal([]byte(trimmed), &object) == nil && len(object) == 1 {
+		if input, ok := object["input"].(string); ok {
+			return input
+		}
+	}
+	return arguments
+}
+
+// CustomToolNames collects the names of the tools a Responses request declares
+// with the freeform "custom" type. Converters use the set to restore
+// custom_tool_call items when the upstream only speaks functions.
+func CustomToolNames(protocol Protocol, payload map[string]any) map[string]bool {
+	if protocol != Responses {
+		return nil
+	}
+	names := map[string]bool{}
+	for _, raw := range jsonutil.SliceAt(payload, "tools") {
+		tool, _ := raw.(map[string]any)
+		if jsonutil.StringAt(tool, "type") != "custom" {
+			continue
+		}
+		if name := jsonutil.StringAt(tool, "name"); name != "" {
+			names[name] = true
+		}
+	}
+	if len(names) == 0 {
+		return nil
+	}
+	return names
 }
 
 // chatResponseFormat converts a bridge-level response format into the OpenAI

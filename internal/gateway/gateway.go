@@ -446,6 +446,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 		}
 		shape := requestShapeFrom(r.Context())
 		toolRenames := shape.renames
+		responseOptions := wire.ResponseOptions{CustomTools: wire.CustomToolNames(external, payload)}
 		if stream {
 			if meta != nil {
 				meta.Stream = true
@@ -468,7 +469,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 				usage, usageReported, err = wire.ForwardStream(r.Context(), streamWriter, streamBody, upstreamRoute.Protocol, model)
 			} else {
 				w.WriteHeader(resp.StatusCode)
-				usage, usageReported, err = wire.TranscodeStream(r.Context(), w, streamBody, upstreamRoute.Protocol, external, model)
+				usage, usageReported, err = wire.TranscodeStreamWithOptions(r.Context(), w, streamBody, upstreamRoute.Protocol, external, model, responseOptions)
 			}
 			if meta != nil {
 				meta.Usage, meta.UsageReported = usage, usageReported
@@ -512,7 +513,7 @@ func (g *Gateway) handleInference(external wire.Protocol) http.HandlerFunc {
 			meta.Usage, meta.UsageReported = usage, reported
 		}
 		if external != upstreamRoute.Protocol {
-			responseBody, err = wire.ConvertResponse(upstreamRoute.Protocol, external, responseBody)
+			responseBody, err = wire.ConvertResponseWithOptions(upstreamRoute.Protocol, external, responseBody, responseOptions)
 			if err != nil {
 				g.logger.Warn("response protocol conversion failed", "component", "conversion", "event", "response_conversion_failed", "request_id", ids.Request, "model", model, "source_protocol", upstreamRoute.Protocol, "target_protocol", external, "error", err)
 				wire.WriteError(w, external, http.StatusBadGateway, "unsupported upstream response", "upstream_error", ids.Request)

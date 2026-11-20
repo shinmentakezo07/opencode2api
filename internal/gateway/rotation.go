@@ -226,6 +226,7 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		copyPayload[k] = v
 	}
 	copyPayload["model"] = route.ID
+	responseOptions := wire.ResponseOptions{CustomTools: wire.CustomToolNames(external, payload)}
 	bodies, err := g.prepareRouteBodies(external, route, copyPayload)
 	if err != nil {
 		result.err = err
@@ -341,7 +342,7 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 			defer g.monitor.EndStream()
 		}
 		streamBody := wire.TextToolStreamReader(wire.RenameStreamReader(resp.Body, route.Protocol, toolRenames), route.Protocol, toolRenames)
-		usage, reported, committed, err := wire.RotationStream(original.Context(), w, streamBody, route.Protocol, external, alias, ready)
+		usage, reported, committed, err := wire.RotationStreamWithOptions(original.Context(), w, streamBody, route.Protocol, external, alias, ready, responseOptions)
 		if meta != nil {
 			meta.Usage = usage
 			meta.UsageReported = reported
@@ -407,7 +408,7 @@ func (g *Gateway) rotationAttempt(parent context.Context, w http.ResponseWriter,
 		}
 	}
 	if err == nil && external != route.Protocol {
-		b, err = wire.ConvertResponse(route.Protocol, external, b)
+		b, err = wire.ConvertResponseWithOptions(route.Protocol, external, b, responseOptions)
 	}
 	if err != nil {
 		result.err = err

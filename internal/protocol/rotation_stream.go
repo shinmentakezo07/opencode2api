@@ -57,12 +57,18 @@ func (e *ClientWriteError) Unwrap() error { return e.Err }
 // error returned by ready; or whatever ended the read, errSSEUnexpectedEOF
 // included. A client cancellation does not get a synthetic error event.
 func RotationStream(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, alias string, ready func() error) (usage Usage, reported, committed bool, result error) {
+	return RotationStreamWithOptions(ctx, w, reader, from, to, alias, ready, ResponseOptions{})
+}
+
+// RotationStreamWithOptions is RotationStream with the request context from
+// ResponseOptions, such as the custom tools the client declared.
+func RotationStreamWithOptions(ctx context.Context, w http.ResponseWriter, reader io.Reader, from, to Protocol, alias string, ready func() error, options ResponseOptions) (usage Usage, reported, committed bool, result error) {
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		return usage, false, false, fmt.Errorf("streaming is unsupported")
 	}
 	parser := streamUsageObserver(from).parser
-	emitter := bridgeStreamEmitter(w, flusher, to, alias)
+	emitter := bridgeStreamEmitter(w, flusher, to, alias, options)
 	pending := []bridgeStreamEvent{}
 	var upstreamFailure error
 	emit := func(event bridgeStreamEvent) error {

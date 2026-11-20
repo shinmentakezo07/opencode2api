@@ -40,9 +40,14 @@ const (
 
 	// Other spellings models use for the same dialect. The parser folds them
 	// onto the canonical tags before parsing.
-	textToolAliasOpen      = "<function_call"
-	textToolAliasRootOpen  = "<function_calls"
-	textToolAliasClose     = "</function_call>"
+	textToolAliasOpen     = "<function_call"
+	textToolAliasRootOpen = "<function_calls"
+	textToolAliasClose    = "</function_call>"
+
+	// textToolInvokeOpen and its closing tag are the Claude <invoke> form
+	// models sometimes emit bare, without a <function_calls> wrapper.
+	textToolInvokeOpen     = "<invoke"
+	textToolInvokeClose    = "</invoke>"
 	textToolAliasRootClose = "</function_calls>"
 
 	// textToolBufferLimit bounds how much an unfinished block may hold back. A
@@ -63,10 +68,10 @@ var textToolNormalizer = strings.NewReplacer(
 )
 
 // normalizeTextToolTags folds alias tags onto the canonical ones. Only a
-// function_call block is rewritten, so <invoke> in ordinary tool-call text is
-// left alone.
+// function_call or invoke block is rewritten, so an <invoke> in ordinary
+// tool-call text is left alone.
 func normalizeTextToolTags(text string) string {
-	if !strings.Contains(text, "function_call") {
+	if !strings.Contains(text, "function_call") && !strings.Contains(text, textToolInvokeOpen) {
 		return text
 	}
 	return textToolNormalizer.Replace(text)
@@ -75,7 +80,7 @@ func normalizeTextToolTags(text string) string {
 // indexTextToolOpen returns the earliest canonical or alias opener, or -1.
 func indexTextToolOpen(text string) int {
 	best := -1
-	for _, marker := range []string{textToolOpen, textToolAliasOpen} {
+	for _, marker := range []string{textToolOpen, textToolAliasOpen, textToolInvokeOpen} {
 		if index := strings.Index(text, marker); index >= 0 && (best < 0 || index < best) {
 			best = index
 		}
@@ -83,16 +88,54 @@ func indexTextToolOpen(text string) int {
 	return best
 }
 
-// textToolCloseTag returns the closing tag that matches the opener at the start
-// of text.
-func textToolCloseTag(text string) string {
+// indexTagEnd returns the offset of the ">" that closes the opening tag that
+// starts at tag[0], skipping quoted attribute values so a ">" — or a "/>"
+// pair — inside an attribute cannot end the tag early. It returns -1 when
+// no closing ">" has arrived or the tag itself does not start one.
+func indexTagEnd(text string) int {
+	if !strings.HasPrefix(text, "<") {
+		return -1
+	}
+	var quote byte
+	for index := 1; index < len(text); index++ {
+		char := text[index]
+		if quote != 0 {
+			if char == quote {
+				quote = 0
+			}
+			continue
+		}
+		switch char {
+		case '"', '\'':
+			quote = char
+		case '>':
+			return index
+		}
+	}
+	return -1
+}
+
+// selfClosingTag reports whether the opening tag ending at text[end] is
+// self-closing, i.e. its last character before ">" is "/".
+func selfClosingTag(text string, end int) bool {
+	return end >= 2 && text[end-1] == '/'
+}
+
+// closingTagFor returns the closing tag that matches the opening tag text
+// starts. Alias spellings must be checked before their shorter prefixes, and
+// an alias root closes with its own spacing: a raw <function_calls> block is
+// closed by </function_calls>, not by the canonical tag the parser folds it
+// onto.
+func closingTagFor(text string) string {
 	switch {
-	case strings.HasPrefix(text, textToolRootOpen):
-		return textToolRootClose
 	case strings.HasPrefix(text, textToolAliasRootOpen):
 		return textToolAliasRootClose
+	case strings.HasPrefix(text, textToolRootOpen):
+		return textToolRootClose
 	case strings.HasPrefix(text, textToolAliasOpen):
 		return textToolAliasClose
+	case strings.HasPrefix(text, textToolInvokeOpen):
+		return textToolInvokeClose
 	default:
 		return textToolClose
 	}
@@ -100,7 +143,9 @@ func textToolCloseTag(text string) string {
 
 // containsTextToolOpen reports whether text carries any opener spelling.
 func containsTextToolOpen(text string) bool {
-	return strings.Contains(text, textToolOpen) || strings.Contains(text, textToolAliasOpen)
+	return strings.Contains(text, textToolOpen) ||
+		strings.Contains(text, textToolAliasOpen) ||
+		strings.Contains(text, textToolInvokeOpen)
 }
 
 // textToolCall is one call recovered from assistant text. Arguments is the
@@ -147,8 +192,11 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 			s.holding = true
 		}
 		// A self-closing <tool_call name="…" arguments="…"/> carries the whole
-		// call in its opening tag and has no body or closing tag.
-		if opening := strings.IndexByte(s.pending, '>'); opening > 0 && s.pending[opening-1] == '/' {
+		// call in its opening tag and has no body or closing tag. The tag end
+		// is found outside quoted attribute values, so a literal "/>" inside
+		// an argument cannot masquerade as the tag's end.
+		opening := indexTagEnd(s.pending)
+		if opening > 0 && selfClosingTag(s.pending, opening) {
 			block := s.pending[:opening+1]
 			s.pending = s.pending[opening+1:]
 			s.holding = false
@@ -159,7 +207,7 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 			}
 			continue
 		}
-		closeTag := textToolCloseTag(s.pending)
+		closeTag := closingTagFor(s.pending)
 		end := strings.Index(s.pending, closeTag)
 		if end < 0 {
 			if len(s.pending) > textToolBufferLimit || final {
@@ -187,7 +235,7 @@ func (s *textToolScanner) push(chunk string, final bool) (string, []textToolCall
 // become a block opener, so the scanner does not forward a split marker.
 func heldMarkerPrefix(text string) int {
 	best := 0
-	for _, marker := range []string{textToolRootOpen, textToolAliasRootOpen} {
+	for _, marker := range []string{textToolRootOpen, textToolAliasRootOpen, textToolInvokeOpen} {
 		limit := len(marker) - 1
 		if limit > len(text) {
 			limit = len(text)
@@ -220,10 +268,9 @@ func extractTextToolCalls(text string, renames *ToolRenames) (string, []textTool
 func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, bool) {
 	block = normalizeTextToolTags(block)
 	inner := block
-	nameAttribute := ""
 	isRoot := strings.HasPrefix(inner, textToolRootOpen)
 	if isRoot {
-		opening := strings.Index(inner, ">")
+		opening := indexTagEnd(inner)
 		if opening < 0 {
 			return nil, false
 		}
@@ -233,24 +280,35 @@ func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, boo
 	var calls []textToolCall
 	rest := inner
 	for {
-		start := strings.Index(rest, textToolOpen)
+		start := indexTextToolOpen(rest)
 		if start < 0 {
 			break
 		}
-		nameAttribute = ""
 		rest = rest[start:]
-		opening := strings.Index(rest, ">")
+		opening := indexTagEnd(rest)
 		if opening < 0 {
 			return nil, false
 		}
-		nameAttribute = tagAttribute(rest[:opening], "name")
+		nameAttribute := tagAttribute(rest[:opening], "name")
+		if selfClosingTag(rest, opening) {
+			// A self-closing inner call carries the whole call in its opening
+			// tag. Before this case existed it fell through to the closing-tag
+			// search below, found nothing (there is no body), and the whole
+			// root block was flushed to the client as ordinary text.
+			if call, ok := parseSelfClosingTextToolCall(rest[:opening+1], renames); ok {
+				calls = append(calls, call)
+			}
+			rest = rest[opening+1:]
+			continue
+		}
+		closeTag := closingTagFor(rest)
 		body := rest[opening+1:]
-		end := strings.Index(body, textToolClose)
+		end := strings.Index(body, closeTag)
 		if end < 0 {
 			return nil, false
 		}
 		chunk := body[:end]
-		rest = body[end+len(textToolClose):]
+		rest = body[end+len(closeTag):]
 		call, ok := parseOneTextToolCall(chunk, nameAttribute, renames)
 		if ok {
 			calls = append(calls, call)
@@ -270,40 +328,54 @@ func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, boo
 }
 
 // tagAttribute reads an attribute value from an opening tag such as
-// `<tool_call name="read">`.
+// `<tool_call name="read">`. The scan is quote-aware: an attribute value that
+// itself contains "name=" cannot shadow the attribute being read. The name
+// must stand at the start of its whitespace-separated segment, so data-name=
+// or filename= no longer match name=.
 func tagAttribute(tag, name string) string {
 	needle := strings.ToLower(name) + "="
 	lower := strings.ToLower(tag)
-	for offset := 0; offset < len(lower); {
-		index := strings.Index(lower[offset:], needle)
-		if index < 0 {
-			return ""
-		}
-		index += offset
-		offset = index + len(needle)
-		// data-name= is a different attribute from name=.
-		if index > 0 && !isTagSeparator(tag[index-1]) {
-			continue
-		}
-		value := strings.TrimSpace(tag[offset:])
-		if value == "" {
-			continue
-		}
-		quote := value[0]
-		if quote != '"' && quote != '\'' {
-			continue
-		}
-		value = value[1:]
-		if end := strings.IndexByte(value, quote); end >= 0 {
-			return value[:end]
+	var quote byte
+	var segment []byte
+	var segments []string
+	split := func() {
+		if len(segment) > 0 {
+			segments = append(segments, string(segment))
+			segment = segment[:0]
 		}
 	}
+	for index := 0; index < len(lower); index++ {
+		char := lower[index]
+		switch {
+		case quote != 0:
+			if char == quote {
+				quote = 0
+			}
+			segment = append(segment, char)
+		case char == '"' || char == '\'':
+			quote = char
+			segment = append(segment, char)
+		case char == ' ' || char == '\t' || char == '\r' || char == '\n':
+			split()
+		default:
+			segment = append(segment, char)
+		}
+	}
+	split()
+	for _, segment := range segments {
+		if !strings.HasPrefix(segment, needle) {
+			continue
+		}
+		value := segment[len(needle):]
+		if len(value) >= 2 {
+			if quote := value[0]; (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
+				return value[1 : len(value)-1]
+			}
+		}
+		// An unquoted attribute value ends at the segment's end.
+		return value
+	}
 	return ""
-}
-
-// isTagSeparator reports whether char can precede an attribute name in a tag.
-func isTagSeparator(char byte) bool {
-	return char == ' ' || char == '\t' || char == '\r' || char == '\n'
 }
 
 // parseOneTextToolCall parses the body of one <tool_call>. A JSON object
@@ -324,7 +396,7 @@ func parseOneTextToolCall(chunk, nameAttribute string, renames *ToolRenames) (te
 		if opening < 0 {
 			return textToolCall{}, false
 		}
-		close := strings.IndexByte(body[opening+1:], '>')
+		close := indexTagEnd(body[opening:])
 		if close < 0 {
 			return textToolCall{}, false
 		}
@@ -790,7 +862,7 @@ func rewriteResponsesTextTools(payload map[string]any, renames *ToolRenames) boo
 func TextToolStreamReader(reader io.Reader, protocol Protocol, renames *ToolRenames) io.Reader {
 	return &textToolStreamReader{
 		buffer: bufio.NewReaderSize(reader, 16<<10),
-		stream: &textToolStream{protocol: protocol, scanner: &textToolScanner{renames: renames}},
+		stream: &textToolStream{protocol: protocol, scanner: &textToolScanner{renames: renames}, toolDeltaIndex: -1},
 	}
 }
 
@@ -867,6 +939,12 @@ type textToolStream struct {
 	calls    []textToolCall
 	event    string
 	held     string
+
+	// toolDeltaIndex is the highest tool_calls index a native Chat delta
+	// carried, or -1 before any native call was seen. Recovered calls start
+	// after it: a client folds deltas by index, so a recovered call reusing a
+	// native index corrupts that call's arguments.
+	toolDeltaIndex int
 
 	// Anthropic content block bookkeeping. openType records a block the
 	// upstream started but has not stopped, so an injected tool block never
@@ -974,6 +1052,12 @@ func (stream *textToolStream) rewriteChatFrame(raw string) []byte {
 				message, _ = choice["message"].(map[string]any)
 			}
 			if message != nil {
+				for _, rawCall := range jsonutil.SliceAt(message, "tool_calls") {
+					call, _ := rawCall.(map[string]any)
+					if index := jsonutil.IntAt(call, "index"); index > stream.toolDeltaIndex {
+						stream.toolDeltaIndex = index
+					}
+				}
 				if text, ok := message["content"].(string); ok && text != "" {
 					clean, calls := stream.scanner.push(text, false)
 					if clean != text {
@@ -1012,7 +1096,7 @@ func (stream *textToolStream) rewriteChatFrame(raw string) []byte {
 				message["content"] = existing + tail
 			}
 			if len(stream.calls) > 0 {
-				message["tool_calls"] = stream.chatToolDeltas()
+				stream.rewriteChatToolDeltas(message)
 				choice["finish_reason"] = "tool_calls"
 				stream.calls = nil
 			}
@@ -1029,12 +1113,43 @@ func (stream *textToolStream) rewriteChatFrame(raw string) []byte {
 	return encoded
 }
 
-// chatToolDeltas renders accumulated calls as Chat delta tool_calls.
+// rewriteChatToolDeltas merges accumulated calls into an existing delta
+// tool_calls slice, starting their indices past both the calls this frame
+// already carries and the native calls earlier frames streamed. Overwriting
+// the slice instead drops a native call made in the same turn; reusing a
+// native index instead corrupts that call, because a client folds deltas by
+// index.
+func (stream *textToolStream) rewriteChatToolDeltas(message map[string]any) {
+	existing := jsonutil.SliceAt(message, "tool_calls")
+	base := stream.toolDeltaIndex + 1
+	for _, raw := range existing {
+		call, _ := raw.(map[string]any)
+		if index := jsonutil.IntAt(call, "index"); index >= base {
+			base = index + 1
+		}
+	}
+	deltas := make([]any, 0, len(stream.calls))
+	for offset, call := range stream.calls {
+		deltas = append(deltas, map[string]any{
+			"index": base + offset,
+			"id":    newToolCallID("call_"),
+			"type":  "function",
+			"function": map[string]any{
+				"name":      call.Name,
+				"arguments": call.Arguments,
+			},
+		})
+	}
+	message["tool_calls"] = append(existing, deltas...)
+}
+
+// chatToolDeltas renders accumulated calls as Chat delta tool_calls, starting
+// their indices past the native calls the stream already reported.
 func (stream *textToolStream) chatToolDeltas() []any {
 	calls := make([]any, 0, len(stream.calls))
-	for index, call := range stream.calls {
+	for offset, call := range stream.calls {
 		calls = append(calls, map[string]any{
-			"index": index,
+			"index": stream.toolDeltaIndex + 1 + offset,
 			"id":    newToolCallID("call_"),
 			"type":  "function",
 			"function": map[string]any{
@@ -1454,6 +1569,11 @@ func (stream *textToolStream) chatNeedsScan(raw string) bool {
 		return true
 	}
 	if hasChatFinishReason(raw) {
+		return true
+	}
+	// A native tool_calls delta names its index; recovered calls must start
+	// after the highest native one instead of colliding with it.
+	if strings.Contains(raw, `"tool_calls"`) {
 		return true
 	}
 	return strings.Contains(raw, "<") || strings.Contains(raw, `\u003c`)

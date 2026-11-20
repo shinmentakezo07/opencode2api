@@ -33,6 +33,16 @@ func TestParseTextTagArgumentsSelfClosingParameter(t *testing.T) {
 	}
 }
 
+func TestParseTextTagArgumentsQuotedAngleBracket(t *testing.T) {
+	var got map[string]any
+	if err := json.Unmarshal([]byte(parseTextTagArguments(`<parameter name="cmd" description="a > b">ls</parameter>`)), &got); err != nil {
+		t.Fatalf("arguments are not a JSON object: %v", err)
+	}
+	if got["cmd"] != "ls" {
+		t.Fatalf("cmd = %#v, want ls; a quoted attribute was cut at its angle bracket: %#v", got["cmd"], got)
+	}
+}
+
 func TestDecodeResponsesCustomToolRequest(t *testing.T) {
 	input := map[string]any{
 		"model": "m",

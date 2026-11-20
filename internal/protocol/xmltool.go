@@ -540,11 +540,11 @@ func parseTextTagArguments(body string) string {
 		if opening < 0 {
 			break
 		}
-		close := strings.IndexByte(body[opening+1:], '>')
-		if close < 0 {
+		tagEnd := indexTagEnd(body[opening:])
+		if tagEnd < 0 {
 			break
 		}
-		rawTag := body[opening+1 : opening+1+close]
+		rawTag := body[opening+1 : opening+tagEnd]
 		trimmedTag := strings.TrimSpace(rawTag)
 		selfClosing := strings.HasSuffix(trimmedTag, "/")
 		key := trimmedTag
@@ -561,7 +561,7 @@ func parseTextTagArguments(body string) string {
 				key = name
 			}
 		}
-		body = body[opening+1+close+1:]
+		body = body[opening+tagEnd+1:]
 		if key == "" || strings.HasPrefix(key, "/") {
 			// Skip closing tags; only opening tags name a parameter.
 			continue

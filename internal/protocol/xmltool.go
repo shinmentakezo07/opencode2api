@@ -63,13 +63,12 @@ var textToolNormalizer = strings.NewReplacer(
 	textToolAliasRootClose, textToolRootClose,
 	textToolAliasOpen, textToolOpen,
 	textToolAliasClose, textToolClose,
-	"<invoke", textToolOpen,
-	"</invoke>", textToolClose,
+	textToolInvokeOpen, textToolOpen,
+	textToolInvokeClose, textToolClose,
 )
 
-// normalizeTextToolTags folds alias tags onto the canonical ones. Only a
-// function_call or invoke block is rewritten, so an <invoke> in ordinary
-// tool-call text is left alone.
+// normalizeTextToolTags folds alias tags onto the canonical ones. Text without
+// an alias spelling is returned unchanged.
 func normalizeTextToolTags(text string) string {
 	if !strings.Contains(text, "function_call") && !strings.Contains(text, textToolInvokeOpen) {
 		return text
@@ -333,8 +332,7 @@ func parseTextToolCalls(block string, renames *ToolRenames) ([]textToolCall, boo
 // must stand at the start of its whitespace-separated segment, so data-name=
 // or filename= no longer match name=.
 func tagAttribute(tag, name string) string {
-	needle := strings.ToLower(name) + "="
-	lower := strings.ToLower(tag)
+	needle := name + "="
 	var quote byte
 	var segment []byte
 	var segments []string
@@ -344,8 +342,8 @@ func tagAttribute(tag, name string) string {
 			segment = segment[:0]
 		}
 	}
-	for index := 0; index < len(lower); index++ {
-		char := lower[index]
+	for index := range tag {
+		char := tag[index]
 		switch {
 		case quote != 0:
 			if char == quote {
@@ -363,10 +361,12 @@ func tagAttribute(tag, name string) string {
 	}
 	split()
 	for _, segment := range segments {
-		if !strings.HasPrefix(segment, needle) {
+		if len(segment) < len(needle) || !strings.EqualFold(segment[:len(needle)], needle) {
 			continue
 		}
-		value := segment[len(needle):]
+		// Strip the self-closing marker so a quoted value still ends in its
+		// quote: <parameter name="flag"/>.
+		value := strings.TrimSuffix(segment[len(needle):], "/")
 		if len(value) >= 2 {
 			if quote := value[0]; (quote == '"' || quote == '\'') && value[len(value)-1] == quote {
 				return value[1 : len(value)-1]
@@ -400,12 +400,12 @@ func parseOneTextToolCall(chunk, nameAttribute string, renames *ToolRenames) (te
 		if close < 0 {
 			return textToolCall{}, false
 		}
-		name = strings.TrimSpace(body[opening+1 : opening+1+close])
+		name = strings.TrimSpace(body[opening+1 : opening+close])
 		if cut := strings.IndexAny(name, " \t\r\n"); cut >= 0 {
 			name = name[:cut]
 		}
 		name = strings.Trim(name, "/")
-		params = body[opening+1+close+1:]
+		params = body[opening+close+1:]
 		params = strings.TrimSuffix(params, "</"+name+">")
 	}
 	arguments := parseTextTagArguments(params)
@@ -703,7 +703,10 @@ func newToolCallID(prefix string) string {
 // visible answer. A body of another shape, or one without a call block, is
 // returned unchanged.
 func RewriteTextToolCalls(body []byte, protocol Protocol, renames *ToolRenames) []byte {
-	if len(body) == 0 || (!bytes.Contains(body, []byte("tool_call")) && !bytes.Contains(body, []byte("function_call"))) {
+	if len(body) == 0 ||
+		(!bytes.Contains(body, []byte("tool_call")) &&
+			!bytes.Contains(body, []byte("function_call")) &&
+			!bytes.Contains(body, []byte("invoke"))) {
 		return body
 	}
 	var payload map[string]any

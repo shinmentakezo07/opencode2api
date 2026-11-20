@@ -141,6 +141,83 @@ func TestExtractTagDialectCallKeepsTrailingText(t *testing.T) {
 	}
 }
 
+// TestExtractChildTagNameDialect pins the tag dialect where the tool name is
+// the first child tag instead of a name attribute. The opening tag's ">" must
+// not leak into the name or swallow the first character of the arguments.
+func TestExtractChildTagNameDialect(t *testing.T) {
+	name, arguments, clean := extractOne(t,
+		`<tool_call><bash><cmd>ls -la</cmd></bash></tool_call>`)
+	if name != "bash" {
+		t.Fatalf("name = %q, want bash", name)
+	}
+	if got := argumentsValue(t, arguments)["cmd"]; got != "ls -la" {
+		t.Fatalf("cmd = %#v, want ls -la", got)
+	}
+	if clean != "" {
+		t.Fatalf("clean text = %q, want the block removed", clean)
+	}
+}
+
+// TestTagAttributePreservesValueCase pins that matching an attribute name
+// case-insensitively does not lowercase the value: tool names and JSON
+// arguments are case-sensitive.
+func TestTagAttributePreservesValueCase(t *testing.T) {
+	name, arguments, _ := extractOne(t,
+		`<tool_call name="ReadFile" arguments='{"path":"Src/Main.go"}'/>`)
+	if name != "ReadFile" {
+		t.Fatalf("name = %q, want ReadFile", name)
+	}
+	if got := argumentsValue(t, arguments)["path"]; got != "Src/Main.go" {
+		t.Fatalf("path = %#v, want the original case", got)
+	}
+}
+
+// TestExtractSelfClosingParameterName pins the common <parameter name="flag"/>
+// spelling: the self-closing slash must not become part of the parameter key.
+func TestExtractSelfClosingParameterName(t *testing.T) {
+	name, arguments, _ := extractOne(t,
+		`<tool_call name="shell"><parameter name="verbose"/></tool_call>`)
+	if name != "shell" {
+		t.Fatalf("name = %q, want shell", name)
+	}
+	decoded := argumentsValue(t, arguments)
+	if _, ok := decoded["verbose"]; !ok {
+		t.Fatalf("arguments = %#v, want the verbose key", decoded)
+	}
+}
+
+// TestRewriteTextToolCallsBareInvoke pins the non-streaming rewrite path: a
+// response whose content carries only a bare <invoke> block must recover the
+// call instead of short-circuiting before the scanner runs.
+func TestRewriteTextToolCallsBareInvoke(t *testing.T) {
+	body := []byte(`{"choices":[{"message":{"role":"assistant","content":"<invoke name=\"bash\"><parameter name=\"cmd\">ls</parameter></invoke>"},"finish_reason":"stop"}]}`)
+	rewritten := RewriteTextToolCalls(body, Chat, nil)
+	var payload map[string]any
+	if err := json.Unmarshal(rewritten, &payload); err != nil {
+		t.Fatalf("rewritten body is not JSON: %v", err)
+	}
+	choice, _ := jsonutil.SliceAt(payload, "choices")[0].(map[string]any)
+	message, _ := choice["message"].(map[string]any)
+	if content, _ := message["content"].(string); content != "" {
+		t.Fatalf("content = %q, want the block removed", content)
+	}
+	calls := jsonutil.SliceAt(message, "tool_calls")
+	if len(calls) != 1 {
+		t.Fatalf("tool_calls = %#v, want one recovered call", calls)
+	}
+	call, _ := calls[0].(map[string]any)
+	function, _ := call["function"].(map[string]any)
+	if function["name"] != "bash" {
+		t.Fatalf("name = %#v, want bash", function["name"])
+	}
+	if got := argumentsValue(t, function["arguments"].(string))["cmd"]; got != "ls" {
+		t.Fatalf("cmd = %#v, want ls", got)
+	}
+	if choice["finish_reason"] != "tool_calls" {
+		t.Fatalf("finish_reason = %#v, want tool_calls", choice["finish_reason"])
+	}
+}
+
 // TestChatStreamRecoveredCallsFollowNativeIndices pins the merge of calls
 // recovered from text into a stream that already carried a native tool call:
 // the native call must survive, the recovered one must start past its index,
